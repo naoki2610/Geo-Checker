@@ -9,8 +9,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
-    <!-- 【変更】不安定なhtml2pdfを廃止し、最も信頼性の高いjsPDF本体を採用 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <style>
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; background-color: #f4f6f9; }
@@ -121,6 +120,7 @@
         .custom-pin { font-size: 24px; text-align: center; line-height: 1; filter: drop-shadow(0px 3px 3px rgba(0,0,0,0.5)); }
         textarea.custom-textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; resize: vertical; font-family: inherit; min-height: 70px; }
 
+        /* PDF出力中の全画面ローディング */
         #loading-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.8); z-index: 999999; flex-direction: column; justify-content: center; align-items: center; color: white;
@@ -133,7 +133,7 @@
 <div id="loading-overlay">
     <div class="big-spinner"></div>
     <div style="font-weight: bold; font-size: 18px; letter-spacing: 1px;">PDF台帳を生成中...</div>
-    <div style="font-size: 12px; margin-top: 10px; color: #ccc;">高品質なデータを書き出しています。<br>画面を閉じずにお待ちください。</div>
+    <div style="font-size: 12px; margin-top: 10px; color: #ccc;">高品質なデータを書き出しています。画面を閉じずにお待ちください。</div>
 </div>
 
 <div id="disclaimer-modal" style="display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99999; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
@@ -572,38 +572,35 @@
         });
     };
 
-    // --- 【完全修復版】A4台帳（PDF）の直接生成エンジン ---
+    // --- 【バグ完全修正版】A4台帳（PDF）の完全動的生成エンジン ---
     window.exportA4Report = async function() {
-        if (!currentGeoData || !window.jspdf) { 
-            alert("ライブラリの読み込み待ち、またはデータがありません。"); return; 
-        }
-        const comment = document.getElementById('geo-comment').value.trim();
+        if (!currentGeoData || typeof html2pdf === 'undefined') { alert("PDF生成ライブラリの読み込み待ち、またはデータがありません。"); return; }
         
+        // 1. テキストエリアから「最新のコメント入力値」を確実に直接取得
+        const comment = document.getElementById('geo-comment').value.trim();
         const btn = document.getElementById('btn-a4');
         const origText = btn.innerHTML;
         
-        // 1. ローディング画面を表示
+        // 2. 全画面ローディングを表示して操作ブロック
         const loadingOverlay = document.getElementById('loading-overlay');
         loadingOverlay.style.display = 'flex';
         
-        // 2. 邪魔なUIを隠す
         closeSheet();
         const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
         if (analyzeBtnWrap) analyzeBtnWrap.style.display = 'none';
         
-        // アニメーション完了を待つ
+        // UIが引っ込むアニメーションを待機
         await new Promise(resolve => setTimeout(resolve, 600)); 
 
         try {
-            // ① 確実な実績のある html2canvas で地図のスクショを生成
+            // ① 地図のスクリーンショットを生成
             const captureArea = document.querySelector('.map-container-layer');
-            const mapCanvas = await html2canvas(captureArea, { useCORS: true, allowTaint: false, scale: 2 });
-            const mapDataUrl = mapCanvas.toDataURL('image/jpeg', 0.9);
+            const canvas = await html2canvas(captureArea, { useCORS: true, allowTaint: false, scale: 2 });
+            const mapDataUrl = canvas.toDataURL('image/jpeg', 0.95);
             
-            // ② 印刷するテキストデータを準備
+            // ② 各種情報のプレーンテキスト・HTML組み立て
             const now = new Date();
             const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${("0"+now.getMinutes()).slice(-2)}`;
-            
             let accStr = currentGeoData.accuracy ? ` (GPS誤差: ±${Math.round(currentGeoData.accuracy)}m)` : "";
             const coord1Str = `Lat: ${currentGeoData.lat.toFixed(6)}, Lng: ${currentGeoData.lng.toFixed(6)}<br>標高: ${currentGeoData.elevation}m ${accStr}`;
             
@@ -623,65 +620,64 @@
             titleStr = titleStr || "固有の地層名なし";
             
             const surroundingStr = currentGeoData.surrounding.replace(/ \/ /g, '<br>'); 
+            
+            // コメント内の改行をHTMLタグに安全に変換して埋め込む
             const commentStr = comment.replace(/\n/g, '<br>') || "(コメントなし)";
             
-            // ③ A4出力用の要素を「動的」に生成し、画面の最上部（ローディングの裏側）に配置
-            // ブラウザの最適化（クリッピング）を回避するため、一時的に完全な実体を作る
-            const reportDiv = document.createElement('div');
-            reportDiv.style.position = 'absolute';
-            reportDiv.style.top = '0';
-            reportDiv.style.left = '0';
-            reportDiv.style.width = '794px'; 
-            reportDiv.style.height = '1123px'; 
-            reportDiv.style.backgroundColor = '#ffffff';
-            reportDiv.style.color = '#000000';
-            reportDiv.style.padding = '40px';
-            reportDiv.style.boxSizing = 'border-box';
-            reportDiv.style.zIndex = '999998'; // ローディング(999999)のすぐ裏
-            reportDiv.style.fontFamily = "'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif";
+            // ③ A4出力用のレイアウトコンテナを動的に構築し、ローディングの真裏にマウント
+            const pdfContainer = document.createElement('div');
+            pdfContainer.id = 'dynamic-pdf-container';
+            pdfContainer.style.position = 'absolute';
+            pdfContainer.style.top = '0';
+            pdfContainer.style.left = '0';
+            pdfContainer.style.width = '794px'; /* A4の幅に厳格に固定 */
+            pdfContainer.style.backgroundColor = '#fff';
+            pdfContainer.style.color = '#000';
+            pdfContainer.style.padding = '35px';
+            pdfContainer.style.boxSizing = 'border-box';
+            pdfContainer.style.zIndex = '999998'; 
             
-            reportDiv.innerHTML = `
-                <div style="border: 2px solid #2c3e50; padding: 20px; height: 100%; box-sizing: border-box; display: flex; flex-direction: column;">
-                    <h2 style="text-align:center; border-bottom: 2px solid #2c3e50; padding-bottom:15px; margin-top:0; font-size: 26px; color: #2c3e50;">地質踏査 現地レポート</h2>
-                    
-                    <div style="text-align:center; margin-bottom: 20px; border: 1px solid #bdc3c7; padding: 5px; background: #fdfdfd;">
-                        <img src="${mapDataUrl}" style="width:100%; max-height:450px; object-fit:contain; display: block;">
-                    </div>
-                    
-                    <table style="width:100%; border-collapse: collapse; font-size:15px; text-align: left; flex: 1;">
-                        <tr><th style="border:1px solid #bdc3c7; padding:10px; background:#ecf0f1; width:22%; color:#2c3e50;">調査日時</th><td style="border:1px solid #bdc3c7; padding:10px;">${dateStr}</td></tr>
-                        <tr><th style="border:1px solid #bdc3c7; padding:10px; background:#ecf0f1; color:#2c3e50;">座標(10進)・標高</th><td style="border:1px solid #bdc3c7; padding:10px;">${coord1Str}</td></tr>
-                        <tr><th style="border:1px solid #bdc3c7; padding:10px; background:#ecf0f1; color:#2c3e50;">座標(平面直角)</th><td style="border:1px solid #bdc3c7; padding:10px;">${xyStr}</td></tr>
-                        <tr><th style="border:1px solid #bdc3c7; padding:10px; background:#ecf0f1; color:#2c3e50;">時代 / 岩相</th><td style="border:1px solid #bdc3c7; padding:10px; font-weight:bold; color:#27ae60;">${geo1Str}</td></tr>
-                        <tr><th style="border:1px solid #bdc3c7; padding:10px; background:#ecf0f1; color:#2c3e50;">地層名・詳細</th><td style="border:1px solid #bdc3c7; padding:10px;">${titleStr}</td></tr>
-                        <tr><th style="border:1px solid #bdc3c7; padding:10px; background:#ecf0f1; color:#2c3e50;">周辺500m地質</th><td style="border:1px solid #bdc3c7; padding:10px; line-height: 1.6;">${surroundingStr}</td></tr>
-                        <tr><th style="border:1px solid #bdc3c7; padding:10px; background:#ecf0f1; height:120px; vertical-align: top; color:#2c3e50;">技術者コメント</th><td style="border:1px solid #bdc3c7; padding:10px; vertical-align: top;">${commentStr}</td></tr>
-                    </table>
-                </div>
+            pdfContainer.innerHTML = `
+                <h2 style="text-align:center; border-bottom: 2px solid #333; padding-bottom:10px; margin-top:0; font-family:sans-serif;">地質踏査 現地レポート</h2>
+                <img src="${mapDataUrl}" style="width:100%; max-height:450px; object-fit:contain; border: 1px solid #333; margin-bottom: 20px;">
+                <table style="width:100%; border-collapse: collapse; font-size:14px; text-align: left; font-family:sans-serif; line-height:1.5;">
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5; width:25%;">調査日時</th><td style="border:1px solid #333; padding:10px;">${dateStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">座標(10進)・標高</th><td style="border:1px solid #333; padding:10px;">${coord1Str}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">座標(平面直角)</th><td style="border:1px solid #333; padding:10px;">${xyStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">時代 / 岩相</th><td style="border:1px solid #333; padding:10px;">${geo1Str}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">地層名・詳細</th><td style="border:1px solid #333; padding:10px;">${titleStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">周辺500m地質</th><td style="border:1px solid #333; padding:10px; line-height: 1.6;">${surroundingStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5; min-height:120px; vertical-align:top;">技術者コメント</th><td style="border:1px solid #333; padding:10px; vertical-align:top; font-weight:bold; color:#111;">${commentStr}</td></tr>
+                </table>
             `;
-            document.body.appendChild(reportDiv);
+            document.body.appendChild(pdfContainer);
 
-            // ブラウザの描画エンジンが新しいDOMを認識するまで十分に待機
+            // ④ スマホ特有の「画面外切り捨て(白紙化)」を破壊するため、一時的にoverflowの全制限を解除
+            const origOverflowHtml = document.documentElement.style.overflow;
+            const origOverflowBody = document.body.style.overflow;
+            document.documentElement.style.overflow = 'visible';
+            document.body.style.overflow = 'visible';
+            window.scrollTo(0, 0);
+
+            // レンダリングパイプラインへの反映時間を確保
             await new Promise(resolve => setTimeout(resolve, 800));
 
-            // ④ 確実なライブラリ (html2canvas + jsPDF) の組み合わせでPDF化
-            const reportCanvas = await html2canvas(reportDiv, { scale: 2, useCORS: true, logging: false });
+            // ⑤ html2pdfライブラリに確実なウィンドウサイズを伝えてPDFを生成・保存
+            const opt = {
+                margin:       0.2,
+                filename:     '地質踏査_現場レポート.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true, windowWidth: 794, scrollY: 0 }, 
+                jsPDF:        { unit: 'in', format: 'a4', orientation: 'portrait' }
+            };
             
-            // DOMから削除
-            document.body.removeChild(reportDiv);
+            await html2pdf().set(opt).from(pdfContainer).save();
 
-            // ⑤ 最も安定している老舗ライブラリ(jsPDF本体)でPDFファイルとして書き出し
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const pdfWidth = pdf.internal.pageSize.getWidth();
-            const pdfHeight = (reportCanvas.height * pdfWidth) / reportCanvas.width;
-            
-            const reportImgData = reportCanvas.toDataURL('image/jpeg', 0.95);
-            pdf.addImage(reportImgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-            
-            pdf.save('地質踏査_現場レポート.pdf');
+            // ⑥ 後片付け処理（動的DOMの削除、スクロール制限の復元）
+            document.body.removeChild(pdfContainer);
+            document.documentElement.style.overflow = origOverflowHtml;
+            document.body.style.overflow = origOverflowBody;
 
-            // 成功のフィードバック
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
             btn.innerHTML = '✅ PDF保存完了';
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; openSheet(); }, 2000);
@@ -693,7 +689,6 @@
             btn.disabled = false;
             openSheet();
         } finally {
-            // 絶対にローディングを消す
             loadingOverlay.style.display = 'none';
         }
     };
