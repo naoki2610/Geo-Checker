@@ -578,7 +578,7 @@
         });
     };
 
-    // --- 【究極進化】A4台帳（PDF）の完全ネイティブキャプチャエンジン ---
+    // --- 【完全解決】キャプチャ時のみ地図をA4比率に変形させるウルトラC（アニメーション停止・再配置版） ---
     window.exportA4Report = async function() {
         if (!currentGeoData || !window.jspdf) { alert("PDF生成ライブラリの読み込み待ち、またはデータがありません。"); return; }
         
@@ -591,7 +591,6 @@
         
         closeSheet();
         
-        // 邪魔なUIを非表示にする
         const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
         const coordPanel = document.getElementById('coord-info-panel');
         if (analyzeBtnWrap) analyzeBtnWrap.style.display = 'none';
@@ -600,41 +599,73 @@
         await new Promise(resolve => setTimeout(resolve, 600)); 
 
         try {
-            // 【革命的修正】スマホの縦長画面を撮るのではなく、キャプチャの瞬間だけ地図を「A4の画像枠のサイズ（横長）」に変更する
             const mapContainer = document.querySelector('.map-container-layer');
             const origWidth = mapContainer.style.width;
             const origHeight = mapContainer.style.height;
             const origPosition = mapContainer.style.position;
             const origZIndex = mapContainer.style.zIndex;
+            const origTop = mapContainer.style.top;
+            const origLeft = mapContainer.style.left;
             
-            // スケールバーの位置も調整
             const scaleContainer = document.querySelector('.custom-scale-container');
             const origScaleBottom = scaleContainer.style.bottom;
-            scaleContainer.style.bottom = '10px';
+            const origScaleRight = scaleContainer.style.right;
 
-            // A4の画像枠に最適な横長サイズ（724px × 400px）に地図コンテナを強制リサイズ
+            const compass = document.querySelector('.compass-rose');
+            const origCompassTop = compass.style.top;
+            const origCompassLeft = compass.style.left;
+
+            const attribution = document.querySelector('.leaflet-control-attribution');
+            const origAttrDisplay = attribution ? attribution.style.display : '';
+
+            // 1. A4の画像枠に最適な横長サイズ（724px × 400px）に強制リサイズ
             mapContainer.style.width = '724px';
             mapContainer.style.height = '400px';
             mapContainer.style.position = 'absolute';
-            mapContainer.style.zIndex = '99999'; // 最前面に出す
+            mapContainer.style.top = '0';
+            mapContainer.style.left = '0';
+            mapContainer.style.zIndex = '99999'; 
 
-            // Leafletにサイズ変更を通知して、横長の広い視野で再描画させる
-            map.invalidateSize();
+            // 2. 撮影用メイク（見切れや被りを防ぐ美しい余白の設定）
+            compass.style.top = '15px';
+            compass.style.left = '15px';
+            scaleContainer.style.bottom = '15px';
+            scaleContainer.style.right = '15px';
+            if (attribution) attribution.style.display = 'none';
+
+            // 3. 【最重要】地図のアニメーション移動を強制停止し、中心をピタッと合わせる
+            map.invalidateSize({animate: false});
+            map.setView([currentGeoData.lat, currentGeoData.lng], map.getZoom(), {animate: false});
             
-            // 地図タイルが読み込まれるのを待つ
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // 地図タイルが完全に読み込まれるまで長めに待つ（ピンズレ・ボケ防止）
+            await new Promise(resolve => setTimeout(resolve, 1500));
 
             // ① 完璧な横長比率になった地図を高画質でスクショ撮影
-            const mapCanvas = await html2canvas(mapContainer, { useCORS: true, allowTaint: false, scale: 2 });
+            const mapCanvas = await html2canvas(mapContainer, { 
+                useCORS: true, 
+                allowTaint: false, 
+                scale: 2,
+                windowWidth: 724,
+                windowHeight: 400
+            });
             const mapDataUrl = mapCanvas.toDataURL('image/jpeg', 0.95);
             
             // 撮影が終わったら地図を元のスマホサイズ（全画面）に戻す
             mapContainer.style.width = origWidth || '100%';
             mapContainer.style.height = origHeight || '100%';
             mapContainer.style.position = origPosition || 'absolute';
+            mapContainer.style.top = origTop || '0';
+            mapContainer.style.left = origLeft || '0';
             mapContainer.style.zIndex = origZIndex || '1';
-            scaleContainer.style.bottom = origScaleBottom;
-            map.invalidateSize();
+            
+            scaleContainer.style.bottom = origScaleBottom || '';
+            scaleContainer.style.right = origScaleRight || '';
+            compass.style.top = origCompassTop || '';
+            compass.style.left = origCompassLeft || '';
+            if (attribution) attribution.style.display = origAttrDisplay;
+            
+            map.invalidateSize({animate: false});
+            map.setView([currentGeoData.lat, currentGeoData.lng], map.getZoom(), {animate: false});
             
             // ② テキストデータの準備
             const now = new Date();
@@ -672,7 +703,6 @@
             reportDiv.style.boxSizing = 'border-box';
             reportDiv.style.zIndex = '9999999'; 
             
-            // ④ 取得した完璧な横長画像をピクセル指定で配置（これで html2canvas のバグを完全回避）
             reportDiv.innerHTML = `
                 <h2 style="text-align:center; border-bottom: 2px solid #333; padding-bottom:10px; margin-top:0; font-family:sans-serif;">地質踏査 現地レポート</h2>
                 
@@ -700,7 +730,7 @@
 
             await new Promise(resolve => setTimeout(resolve, 800));
 
-            // ⑤ html2canvasでA4レイアウト全体を画像化
+            // ④ html2canvasでA4レイアウト全体を画像化
             const reportCanvas = await html2canvas(reportDiv, {
                 scale: 2,
                 useCORS: true,
@@ -710,7 +740,7 @@
             });
             const finalImgData = reportCanvas.toDataURL('image/jpeg', 0.95);
 
-            // ⑥ jsPDFでPDF化
+            // ⑤ jsPDFでPDF化
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -719,7 +749,7 @@
             pdf.addImage(finalImgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
             pdf.save('地質踏査_現場レポート.pdf');
 
-            // ⑦ 後片付け（隠したUIを元に戻す）
+            // ⑥ 後片付け
             document.body.removeChild(reportDiv);
             document.documentElement.style.overflow = origOverflowHtml;
             document.body.style.overflow = origOverflowBody;
@@ -737,7 +767,7 @@
             btn.innerHTML = origText;
             btn.disabled = false;
             
-            // エラー時も地図サイズを元に戻す
+            // エラー時も地図サイズを確実に戻す
             const mapContainer = document.querySelector('.map-container-layer');
             mapContainer.style.width = '100%';
             mapContainer.style.height = '100%';
