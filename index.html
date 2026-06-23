@@ -130,6 +130,7 @@
 </head>
 <body class="sheet-collapsed">
 
+<!-- 全画面ローディング -->
 <div id="loading-overlay">
     <div class="big-spinner"></div>
     <div style="font-weight: bold; font-size: 18px; letter-spacing: 1px;">PDF台帳を構築中...</div>
@@ -389,7 +390,6 @@
         const display = document.getElementById('result-display');
         if (!navigator.geolocation) { alert("GPS非対応端末です"); return; }
         
-        // 【バグ修正①】新しい地点を測位する時に初めて、前回のコメントをリセットする
         document.getElementById('geo-comment').value = "";
 
         display.innerHTML = `<span class="loading-spinner"></span><span style="color:#3498db; font-weight:bold;">GPS測位中...</span>`;
@@ -421,7 +421,6 @@
     async function registerCenterPin() {
         const center = map.getCenter(); const lat = center.lat; const lng = center.lng;
         
-        // 【バグ修正②】新しい地点を解析する時に初めて、前回のコメントをリセットする
         document.getElementById('geo-comment').value = "";
 
         if (bufferCircle) map.removeLayer(bufferCircle);
@@ -452,7 +451,6 @@
             }
             const data = await res.json();
             
-            // 【修正】強引な決め打ちをやめ、客観的な事実のみを表示する
             const age = data.age_ja && data.age_ja.trim() !== "" ? data.age_ja : "未定義 (データなし)";
             
             const lithology = data.lithology_ja || "不明";
@@ -530,9 +528,6 @@
         
         document.getElementById('record-count').innerText = geoRecords.length;
         
-        // 【根本原因の削除】記録ボタンを押した直後にコメントを消去しない（PDF出力のために残す）
-        // document.getElementById('geo-comment').value = ""; 
-        
         alert(`データ(No.${recordIdCounter})を記録しました。`);
         closeSheet(); 
     }
@@ -584,47 +579,34 @@
         });
     };
 
-    // --- 【堅牢版】直接jsPDFを使った100%確実なPDF出力エンジン ---
+    // --- 【完全改修版】画像のアスペクト比を維持し、邪魔なパネルを消すA4出力エンジン ---
     window.exportA4Report = async function() {
         if (!currentGeoData || !window.jspdf) { alert("PDF生成ライブラリの読み込み待ち、またはデータがありません。"); return; }
         
-        // ① ボタンを押した瞬間にコメント欄から最新の文字列を取得
         const comment = document.getElementById('geo-comment').value.trim();
-        
         const btn = document.getElementById('btn-a4');
         const origText = btn.innerHTML;
         
-        // 画面全体を覆うローディングを表示（ユーザー操作をブロック）
         const loadingOverlay = document.getElementById('loading-overlay');
         loadingOverlay.style.display = 'flex';
         
-        // 邪魔なUIを隠す
         closeSheet();
-        const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
-        if (analyzeBtnWrap) analyzeBtnWrap.style.display = 'none';
         
-        // UIが引っ込むアニメーションを待機
+        // 【重要】PDF撮影時に邪魔になるUI（ボタンや右上のパネル）をすべて非表示にする
+        const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
+        const coordPanel = document.getElementById('coord-info-panel');
+        if (analyzeBtnWrap) analyzeBtnWrap.style.display = 'none';
+        if (coordPanel) coordPanel.style.display = 'none'; 
+        
         await new Promise(resolve => setTimeout(resolve, 600)); 
 
         try {
-            // ② 既存の正常稼働している html2canvas で地図画像を取得
+            // ① 地図のスクショをそのままの縦横比で撮影
             const captureArea = document.querySelector('.map-container-layer');
             const mapCanvas = await html2canvas(captureArea, { useCORS: true, allowTaint: false, scale: 2 });
             const mapDataUrl = mapCanvas.toDataURL('image/jpeg', 0.95);
             
-            // ③ A4出力用のレイアウトコンテナを動的に構築し、最前面(z-index:9999999)に配置
-            const reportDiv = document.createElement('div');
-            reportDiv.style.position = 'absolute';
-            reportDiv.style.top = '0';
-            reportDiv.style.left = '0';
-            // A4サイズの幅をピクセルで厳密に固定 (96dpi換算)
-            reportDiv.style.width = '794px'; 
-            reportDiv.style.backgroundColor = '#fff';
-            reportDiv.style.color = '#000';
-            reportDiv.style.padding = '35px';
-            reportDiv.style.boxSizing = 'border-box';
-            reportDiv.style.zIndex = '9999999'; 
-            
+            // ② テキストデータの準備
             const now = new Date();
             const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${("0"+now.getMinutes()).slice(-2)}`;
             let accStr = currentGeoData.accuracy ? ` (GPS誤差: ±${Math.round(currentGeoData.accuracy)}m)` : "";
@@ -645,36 +627,51 @@
             if(currentGeoData.title) titleStr += `詳細: ${currentGeoData.title}<br>`;
             titleStr = titleStr || "固有の地層名なし";
             
-            const surroundingStr = currentGeoData.surrounding.replace(/ \/ /g, '<br>'); 
-            const commentStr = comment.replace(/\n/g, '<br>') || "(コメントなし)";
+            // 【堅牢化】表崩れを防ぐため、改行を確実にdiv要素に変換
+            const surroundingStr = currentGeoData.surrounding.split(' / ').map(s => `<div style="margin-bottom:4px;">${s}</div>`).join(''); 
+            const commentStr = comment.split('\n').map(s => `<div>${s}</div>`).join('') || "(コメントなし)";
+            
+            // ③ A4出力用のレイアウトコンテナを構築
+            const reportDiv = document.createElement('div');
+            reportDiv.style.position = 'absolute';
+            reportDiv.style.top = '0';
+            reportDiv.style.left = '0';
+            reportDiv.style.width = '794px'; 
+            reportDiv.style.backgroundColor = '#fff';
+            reportDiv.style.color = '#000';
+            reportDiv.style.padding = '35px';
+            reportDiv.style.boxSizing = 'border-box';
+            reportDiv.style.zIndex = '9999999'; 
             
             reportDiv.innerHTML = `
                 <h2 style="text-align:center; border-bottom: 2px solid #333; padding-bottom:10px; margin-top:0; font-family:sans-serif;">地質踏査 現地レポート</h2>
-                <img src="${mapDataUrl}" style="width:100%; max-height:450px; object-fit:contain; border: 1px solid #333; margin-bottom: 20px;">
+                
+                <!-- 【最重要修正】CSSの object-fit: contain を使用し、ブラウザのネイティブ機能で絶対に歪ませない -->
+                <div style="width:100%; height:400px; display:flex; justify-content:center; align-items:center; background:#f4f6f9; margin-bottom:15px; border:1px solid #333; padding: 10px; box-sizing: border-box;">
+                    <img src="${mapDataUrl}" style="max-width:100%; max-height:100%; object-fit:contain; display:block;">
+                </div>
+                
                 <table style="width:100%; border-collapse: collapse; font-size:14px; text-align: left; font-family:sans-serif; line-height:1.5;">
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5; width:25%;">調査日時</th><td style="border:1px solid #333; padding:10px;">${dateStr}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">座標(10進)・標高</th><td style="border:1px solid #333; padding:10px;">${coord1Str}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">座標(平面直角)</th><td style="border:1px solid #333; padding:10px;">${xyStr}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">時代 / 岩相</th><td style="border:1px solid #333; padding:10px;">${geo1Str}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">地層名・詳細</th><td style="border:1px solid #333; padding:10px;">${titleStr}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5;">周辺500m地質</th><td style="border:1px solid #333; padding:10px; line-height: 1.6;">${surroundingStr}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:10px; background:#f5f5f5; min-height:120px; vertical-align:top;">技術者コメント</th><td style="border:1px solid #333; padding:10px; vertical-align:top; font-weight:bold; color:#111;">${commentStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5; width:22%;">調査日時</th><td style="border:1px solid #333; padding:8px;">${dateStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">座標・標高</th><td style="border:1px solid #333; padding:8px;">${coord1Str}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">平面直角座標</th><td style="border:1px solid #333; padding:8px;">${xyStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">時代 / 岩相</th><td style="border:1px solid #333; padding:8px;">${geo1Str}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">地層名・詳細</th><td style="border:1px solid #333; padding:8px;">${titleStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">周辺500m</th><td style="border:1px solid #333; padding:8px; line-height: 1.6;">${surroundingStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5; min-height:100px; vertical-align:top;">技術者所見</th><td style="border:1px solid #333; padding:8px; vertical-align:top; font-weight:bold; color:#111;">${commentStr}</td></tr>
                 </table>
             `;
             document.body.appendChild(reportDiv);
 
-            // ④ スマホ特有の「画面外切り捨て(白紙化)」を無効化するため、一時的にoverflowを可視化
             const origOverflowHtml = document.documentElement.style.overflow;
             const origOverflowBody = document.body.style.overflow;
             document.documentElement.style.overflow = 'visible';
             document.body.style.overflow = 'visible';
             window.scrollTo(0, 0);
 
-            // レンダリングパイプラインへの反映時間を長めに確保
             await new Promise(resolve => setTimeout(resolve, 800));
 
-            // ⑤ html2canvasで「A4サイズのDOM」を丸ごと一枚の巨大な画像にする
-            // windowWidthを明示的に指定することで、スマホ環境でも強制的に800px幅として撮影させる
+            // ④ html2canvasでA4レイアウト全体を画像化
             const reportCanvas = await html2canvas(reportDiv, {
                 scale: 2,
                 useCORS: true,
@@ -684,7 +681,7 @@
             });
             const finalImgData = reportCanvas.toDataURL('image/jpeg', 0.95);
 
-            // ⑥ jsPDFを直接起動し、作成した巨大な画像をPDFの中に「写真」として貼り付ける
+            // ⑤ jsPDFでPDF化
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -693,18 +690,21 @@
             pdf.addImage(finalImgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
             pdf.save('地質踏査_現場レポート.pdf');
 
-            // ⑦ 後片付け処理（動的DOMの削除、スクロール制限の復元）
+            // ⑥ 後片付け（隠したUIを元に戻す）
             document.body.removeChild(reportDiv);
             document.documentElement.style.overflow = origOverflowHtml;
             document.body.style.overflow = origOverflowBody;
-
+            
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
+            if (coordPanel) coordPanel.style.display = 'block'; // 隠した座標パネルを復活させる
+
             btn.innerHTML = '✅ PDF保存完了';
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; openSheet(); }, 2000);
 
         } catch (err) {
             alert('レポート作成に失敗しました\n' + err.message);
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
+            if (coordPanel) coordPanel.style.display = 'block'; 
             btn.innerHTML = origText;
             btn.disabled = false;
             openSheet();
