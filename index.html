@@ -15,7 +15,7 @@
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; background-color: #f4f6f9; }
         
         .map-container-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-        #map { width: 100%; height: 100%; cursor: crosshair; }
+        #map { width: 100%; height: 100%; cursor: crosshair; background-color: #f4f6f9; }
 
         .center-cursor {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -130,11 +130,10 @@
 </head>
 <body class="sheet-collapsed">
 
-<!-- 全画面ローディング -->
 <div id="loading-overlay">
     <div class="big-spinner"></div>
     <div style="font-weight: bold; font-size: 18px; letter-spacing: 1px;">PDF台帳を構築中...</div>
-    <div style="font-size: 12px; margin-top: 10px; color: #ccc;">高品質なデータを書き出しています。<br>画面を閉じずにお待ちください。</div>
+    <div style="font-size: 12px; margin-top: 10px; color: #ccc;">高品質な地図データを描画しています。<br>画面を閉じずにお待ちください。</div>
 </div>
 
 <div id="disclaimer-modal" style="display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99999; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
@@ -209,7 +208,7 @@
                         <button type="button" class="field-safe-btn btn-green" style="flex:1; height:40px; font-size:13px;" onclick="exportGeoCSV()">📊 CSV出力 (<span id="record-count">0</span>件)</button>
                         <button type="button" class="field-safe-btn btn-dark" style="flex:1; height:40px; font-size:13px;" onclick="exportGeoScreenshot()">📸 スクショ保存</button>
                     </div>
-                    <button type="button" id="btn-a4" class="field-safe-btn btn-orange" style="height:44px;" disabled onclick="exportA4Report()">📄 A4台帳(PDF)を直接保存</button>
+                    <button type="button" id="btn-a4" class="field-safe-btn btn-orange" style="height:44px;" disabled onclick="exportA4Report()">📄 A4台帳(PDF)を作成</button>
                 </div>
 
                 <div class="opacity-control" style="margin-top: 10px;">
@@ -579,7 +578,7 @@
         });
     };
 
-    // --- 【完全改修版】画像のアスペクト比を維持し、邪魔なパネルを消すA4出力エンジン ---
+    // --- 【究極進化】A4台帳（PDF）の完全ネイティブキャプチャエンジン ---
     window.exportA4Report = async function() {
         if (!currentGeoData || !window.jspdf) { alert("PDF生成ライブラリの読み込み待ち、またはデータがありません。"); return; }
         
@@ -592,7 +591,7 @@
         
         closeSheet();
         
-        // 【重要】PDF撮影時に邪魔になるUI（ボタンや右上のパネル）をすべて非表示にする
+        // 邪魔なUIを非表示にする
         const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
         const coordPanel = document.getElementById('coord-info-panel');
         if (analyzeBtnWrap) analyzeBtnWrap.style.display = 'none';
@@ -601,10 +600,41 @@
         await new Promise(resolve => setTimeout(resolve, 600)); 
 
         try {
-            // ① 地図のスクショをそのままの縦横比で撮影
-            const captureArea = document.querySelector('.map-container-layer');
-            const mapCanvas = await html2canvas(captureArea, { useCORS: true, allowTaint: false, scale: 2 });
+            // 【革命的修正】スマホの縦長画面を撮るのではなく、キャプチャの瞬間だけ地図を「A4の画像枠のサイズ（横長）」に変更する
+            const mapContainer = document.querySelector('.map-container-layer');
+            const origWidth = mapContainer.style.width;
+            const origHeight = mapContainer.style.height;
+            const origPosition = mapContainer.style.position;
+            const origZIndex = mapContainer.style.zIndex;
+            
+            // スケールバーの位置も調整
+            const scaleContainer = document.querySelector('.custom-scale-container');
+            const origScaleBottom = scaleContainer.style.bottom;
+            scaleContainer.style.bottom = '10px';
+
+            // A4の画像枠に最適な横長サイズ（724px × 400px）に地図コンテナを強制リサイズ
+            mapContainer.style.width = '724px';
+            mapContainer.style.height = '400px';
+            mapContainer.style.position = 'absolute';
+            mapContainer.style.zIndex = '99999'; // 最前面に出す
+
+            // Leafletにサイズ変更を通知して、横長の広い視野で再描画させる
+            map.invalidateSize();
+            
+            // 地図タイルが読み込まれるのを待つ
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // ① 完璧な横長比率になった地図を高画質でスクショ撮影
+            const mapCanvas = await html2canvas(mapContainer, { useCORS: true, allowTaint: false, scale: 2 });
             const mapDataUrl = mapCanvas.toDataURL('image/jpeg', 0.95);
+            
+            // 撮影が終わったら地図を元のスマホサイズ（全画面）に戻す
+            mapContainer.style.width = origWidth || '100%';
+            mapContainer.style.height = origHeight || '100%';
+            mapContainer.style.position = origPosition || 'absolute';
+            mapContainer.style.zIndex = origZIndex || '1';
+            scaleContainer.style.bottom = origScaleBottom;
+            map.invalidateSize();
             
             // ② テキストデータの準備
             const now = new Date();
@@ -627,9 +657,8 @@
             if(currentGeoData.title) titleStr += `詳細: ${currentGeoData.title}<br>`;
             titleStr = titleStr || "固有の地層名なし";
             
-            // 【堅牢化】表崩れを防ぐため、改行を確実にdiv要素に変換
-            const surroundingStr = currentGeoData.surrounding.split(' / ').map(s => `<div style="margin-bottom:4px;">${s}</div>`).join(''); 
-            const commentStr = comment.split('\n').map(s => `<div>${s}</div>`).join('') || "(コメントなし)";
+            const surroundingStr = currentGeoData.surrounding.replace(/ \/ /g, '<br>'); 
+            const commentStr = comment.replace(/\n/g, '<br>') || "(コメントなし)";
             
             // ③ A4出力用のレイアウトコンテナを構築
             const reportDiv = document.createElement('div');
@@ -643,12 +672,12 @@
             reportDiv.style.boxSizing = 'border-box';
             reportDiv.style.zIndex = '9999999'; 
             
+            // ④ 取得した完璧な横長画像をピクセル指定で配置（これで html2canvas のバグを完全回避）
             reportDiv.innerHTML = `
                 <h2 style="text-align:center; border-bottom: 2px solid #333; padding-bottom:10px; margin-top:0; font-family:sans-serif;">地質踏査 現地レポート</h2>
                 
-                <!-- 【最重要修正】CSSの object-fit: contain を使用し、ブラウザのネイティブ機能で絶対に歪ませない -->
-                <div style="width:100%; height:400px; display:flex; justify-content:center; align-items:center; background:#f4f6f9; margin-bottom:15px; border:1px solid #333; padding: 10px; box-sizing: border-box;">
-                    <img src="${mapDataUrl}" style="max-width:100%; max-height:100%; object-fit:contain; display:block;">
+                <div style="width:724px; height:400px; margin-bottom:15px; border:1px solid #333; overflow:hidden; display:block;">
+                    <img src="${mapDataUrl}" style="width:724px; height:400px; display:block; margin:0; padding:0;">
                 </div>
                 
                 <table style="width:100%; border-collapse: collapse; font-size:14px; text-align: left; font-family:sans-serif; line-height:1.5;">
@@ -671,7 +700,7 @@
 
             await new Promise(resolve => setTimeout(resolve, 800));
 
-            // ④ html2canvasでA4レイアウト全体を画像化
+            // ⑤ html2canvasでA4レイアウト全体を画像化
             const reportCanvas = await html2canvas(reportDiv, {
                 scale: 2,
                 useCORS: true,
@@ -681,7 +710,7 @@
             });
             const finalImgData = reportCanvas.toDataURL('image/jpeg', 0.95);
 
-            // ⑤ jsPDFでPDF化
+            // ⑥ jsPDFでPDF化
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -690,13 +719,13 @@
             pdf.addImage(finalImgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
             pdf.save('地質踏査_現場レポート.pdf');
 
-            // ⑥ 後片付け（隠したUIを元に戻す）
+            // ⑦ 後片付け（隠したUIを元に戻す）
             document.body.removeChild(reportDiv);
             document.documentElement.style.overflow = origOverflowHtml;
             document.body.style.overflow = origOverflowBody;
             
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
-            if (coordPanel) coordPanel.style.display = 'block'; // 隠した座標パネルを復活させる
+            if (coordPanel) coordPanel.style.display = 'block'; 
 
             btn.innerHTML = '✅ PDF保存完了';
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; openSheet(); }, 2000);
@@ -707,6 +736,15 @@
             if (coordPanel) coordPanel.style.display = 'block'; 
             btn.innerHTML = origText;
             btn.disabled = false;
+            
+            // エラー時も地図サイズを元に戻す
+            const mapContainer = document.querySelector('.map-container-layer');
+            mapContainer.style.width = '100%';
+            mapContainer.style.height = '100%';
+            mapContainer.style.position = 'absolute';
+            mapContainer.style.zIndex = '1';
+            if (map) map.invalidateSize();
+            
             openSheet();
         } finally {
             loadingOverlay.style.display = 'none';
