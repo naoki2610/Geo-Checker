@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>地質・ボーリング情報チェッカー (プロ版)</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; background-color: #f4f6f9; }
+        
+        .map-container-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #map { width: 100%; height: 100%; cursor: crosshair; }
+
+        .ui-overlay-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; padding: 12px; }
+        .ui-clickable { pointer-events: auto; } 
+
+        .header-card { background: rgba(255, 255, 255, 0.95); border-radius: 12px; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); border: 2px solid #34495e; text-align: center; }
+        .header-card h1 { margin: 0 0 4px 0; font-size: 15px; color: #2c3e50; font-weight: bold; }
+        .header-card p { margin: 0; font-size: 10px; color: #7f8c8d; }
+
+        .bottom-operation-sheet { background: #ffffff; border-radius: 16px 16px 12px 12px; padding: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.15); border: 2px solid #34495e; max-height: 55%; overflow-y: auto; pointer-events: auto; display: flex; flex-direction: column; gap: 10px; }
+        
+        .tabs { display: flex; gap: 5px; background: #eee; padding: 4px; border-radius: 8px; }
+        .tab-btn { flex: 1; padding: 8px; text-align: center; font-size: 12px; font-weight: bold; color: #555; background: #fff; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; transition: 0.2s; }
+        .tab-btn.active { background: #3498db; color: white; border-color: #2980b9; }
+
+        .tab-content { display: none; flex-direction: column; gap: 8px; }
+        .tab-content.active { display: flex; }
+
+        .field-safe-btn { width: 100%; height: 44px; font-size: 14px; font-weight: bold; color: white; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 6px rgba(0,0,0,0.15); transition: 0.1s; -webkit-tap-highlight-color: transparent; }
+        .field-safe-btn:active { transform: scale(0.98); box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+        .field-safe-btn:disabled { background-color: #bdc3c7; cursor: not-allowed; box-shadow: none; transform: none; }
+        .btn-blue { background-color: #3498db; }
+        .btn-green { background-color: #27ae60; }
+        .btn-orange { background-color: #e67e22; }
+
+        .result-box { background: #fdfefe; border: 2px solid #bdc3c7; border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.5; color: #2c3e50; min-height: 60px; overflow-y: auto; max-height: 200px; }
+        .result-box .label { color: #7f8c8d; font-size: 10px; display: block; margin-bottom: 2px; border-bottom: 1px dashed #eee; margin-top: 6px; }
+        .result-box .value { font-weight: bold; font-size: 13px; display: block; color: #2980b9; }
+        .result-box .surrounding-item { display: inline-block; background: #ecf0f1; padding: 3px 6px; border-radius: 4px; margin: 2px; font-size: 11px; border: 1px solid #ddd; }
+        
+        .opacity-control { display: flex; align-items: center; gap: 10px; margin-top: 5px; padding-top: 5px; border-top: 1px solid #eee; }
+        .opacity-control label { font-size: 11px; font-weight: bold; color: #555; white-space: nowrap; }
+        .opacity-control input[type="range"] { flex: 1; }
+
+        .loading-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(52, 152, 219, 0.3); border-radius: 50%; border-top-color: #3498db; animation: spin 1s ease-in-out infinite; margin-right: 6px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .crosshair-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 20px; height: 20px; pointer-events: none; z-index: 500; }
+        .crosshair-center::before { content: ''; position: absolute; top: 9px; left: 0; width: 20px; height: 2px; background: rgba(231, 76, 60, 0.8); }
+        .crosshair-center::after { content: ''; position: absolute; top: 0; left: 9px; width: 2px; height: 20px; background: rgba(231, 76, 60, 0.8); }
+
+        .file-input-wrapper { border: 2px dashed #3498db; padding: 15px; text-align: center; border-radius: 8px; background: #ebf5fb; cursor: pointer; }
+        .file-input-wrapper input[type="file"] { display: none; }
+        .file-input-wrapper label { cursor: pointer; font-weight: bold; color: #2980b9; display: block; }
+        
+        .marker-popup-content { font-size: 12px; line-height: 1.4; }
+        .marker-popup-title { font-weight: bold; color: #2c3e50; border-bottom: 2px solid #3498db; margin-bottom: 4px; }
+
+        /* 【追加】ピン留め用のカスタムアイコンのスタイル */
+        .custom-pin { font-size: 20px; text-align: center; line-height: 1; filter: drop-shadow(0px 2px 2px rgba(0,0,0,0.5)); }
+        
+        /* 【追加】コメント入力欄のスタイル */
+        textarea.custom-textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 13px; resize: vertical; font-family: inherit; margin-bottom: 8px; min-height: 60px; }
+    </style>
+</head>
+<body>
+
+<!-- 【追加】免責事項・注意喚起モーダル -->
+<div id="disclaimer-modal" class="ui-clickable" style="display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99999; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
+    <div style="background: #fff; padding: 20px; border-radius: 12px; max-width: 400px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+        <h3 style="margin-top: 0; color: #c0392b; border-bottom: 2px solid #e74c3c; padding-bottom: 8px;">⚠️ 利用上の重要事項</h3>
+        <p style="font-size: 13px; color: #333; line-height: 1.6; font-weight: bold;">
+            本アプリを実務でご利用の際は、以下の点に十分ご注意ください。
+        </p>
+        <ul style="font-size: 12px; color: #555; padding-left: 20px; line-height: 1.5; margin-bottom: 15px;">
+            <li style="margin-bottom: 8px;"><b>シームレス地質図の精度限界:</b> 本システムで表示される地質図（産総研V2）は、基本縮尺1/20万で編纂されています。スマホのGPS精度まで拡大した場合、<b>実際の地質境界と数十m〜数百mのズレが生じる可能性</b>があります。</li>
+            <li><b>現地確認の徹底:</b> アプリ上のデジタルデータはあくまで広域的な傾向を示す補助情報です。必ず<b>ご自身の目と手で露頭やボーリングコアを確認（グラウンド・トゥルース）</b>し、現地の事実を最優先して判断してください。</li>
+        </ul>
+        <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 13px; font-weight: bold; color: #2c3e50; cursor: pointer; margin-bottom: 20px; background: #fdf0ed; padding: 10px; border-radius: 6px; border: 1px solid #fadbd8;">
+            <input type="checkbox" id="agree-checkbox" style="width: 20px; height: 20px; margin: 0;" onchange="document.getElementById('agree-btn').disabled = !this.checked;">
+            <span style="line-height: 1.4;">上記を理解し、現地の事実を優先して判断することに同意します。</span>
+        </label>
+        <button id="agree-btn" class="field-safe-btn btn-blue" style="margin-bottom: 0;" disabled onclick="document.getElementById('disclaimer-modal').style.display='none'">同意して利用開始</button>
+    </div>
+</div>
+
+<div class="map-container-layer">
+    <div id="map"></div>
+    <div class="crosshair-center"></div>
+</div>
+
+<div class="ui-overlay-layer">
+    
+    <div class="header-card ui-clickable">
+        <h1>地質・ボーリング情報チェッカー</h1>
+        <p>背景: 地理院地図 ＋ 産総研シームレス地質図V2</p>
+    </div>
+
+    <div class="bottom-operation-sheet ui-clickable">
+        
+        <div class="tabs">
+            <div class="tab-btn active" onclick="switchTab('tab-geo')">⛏️ 地質チェッカー</div>
+            <div class="tab-btn" onclick="switchTab('tab-boring')">📊 ボーリング読込</div>
+        </div>
+
+        <!-- 地質チェックタブ -->
+        <div id="tab-geo" class="tab-content active">
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="field-safe-btn btn-blue" onclick="fetchLocationAndGeology()" style="flex:1;">📍 現在地取得</button>
+                <button type="button" class="field-safe-btn btn-green" onclick="registerCenterPin()" style="flex:1;">📌 中央にピン留め</button>
+            </div>
+            
+            <div style="font-size:10px; color:#666; text-align:center;">地図を動かして「ピン留め」すると周辺地質も解析します。</div>
+
+            <div class="result-box" id="result-display" style="margin-bottom: 8px;">
+                <span style="color:#95a5a6;">現在地を取得するか、地図中央をピン留めしてください。</span>
+            </div>
+
+            <!-- 【追加】コメント入力欄と記録・出力ボタン群 -->
+            <textarea id="geo-comment" class="custom-textarea" placeholder="現場の所見、露頭の様子などの技術者コメントを入力..."></textarea>
+            <button type="button" class="field-safe-btn btn-blue" style="background:#2c3e50; height:40px; margin-bottom:12px;" onclick="recordGeoData()">💾 地質データとコメントをリストに記録</button>
+            
+            <div style="display:flex; gap:8px;">
+                <button type="button" class="field-safe-btn btn-green" style="flex:1; height:38px; font-size:12px; margin-bottom:0;" onclick="exportGeoCSV()">📊 CSV出力 (<span id="record-count">0</span>件)</button>
+                <button type="button" class="field-safe-btn btn-dark" style="flex:1; height:38px; font-size:12px; margin-bottom:0;" onclick="exportGeoScreenshot()">📸 スクショ保存</button>
+            </div>
+
+            <div class="opacity-control">
+                <label>地質図の濃さ</label>
+                <input type="range" id="geology-opacity" min="0" max="1" step="0.1" value="0.6" oninput="updateGeoOpacity(this.value)">
+            </div>
+        </div>
+
+        <!-- ボーリングデータ読込タブ -->
+        <div id="tab-boring" class="tab-content">
+            <div style="font-size:11px; color:#555; line-height:1.4;">
+                国土地盤情報（KuniJiban）等のオープンデータ(CSV)を地図にプロットします。<br>
+                ※「緯度/Lat」「経度/Lng」が含まれるCSVを選択してください。
+            </div>
+            
+            <div class="file-input-wrapper">
+                <label for="csv-import">📁 ボーリングCSVを選択して読込</label>
+                <input type="file" id="csv-import" accept=".csv" onchange="importBoringData(this)">
+            </div>
+            
+            <div class="result-box" id="boring-status" style="min-height:40px;">
+                <span style="color:#95a5a6;">読み込まれたデータはありません。</span>
+            </div>
+            
+            <button type="button" class="field-safe-btn btn-orange" onclick="clearBoringMarkers()" style="height:36px; font-size:12px;">🗑️ 読み込んだピンをクリア</button>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    let map = null;
+    let geoLayer = null;
+    let gpsMarker = null;
+    let gpsCircle = null;
+    let fetchTimeout = null;
+    let customPinsLayer = null; 
+    let boringLayer = null;     
+    
+    // 【追加】記録保存用のグローバル変数
+    let currentGeoData = null; 
+    let geoRecords = [];       
+    let recordIdCounter = 0;
+
+    // 初期化 【修正】スクショ保存（html2canvas）でのセキュリティエラーを回避するため、crossOrigin: true を追加しました
+    const stdMap = L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', { attribution: '国土地理院', maxZoom: 18, crossOrigin: true });
+    geoLayer = L.tileLayer('https://gbank.gsj.jp/seamless/v2/api/1.2/tiles/{z}/{y}/{x}.png', { opacity: 0.6, attribution: 'AIST', maxNativeZoom: 13, maxZoom: 18, crossOrigin: true });
+    map = L.map('map', { center: [36.0, 138.0], zoom: 6, layers: [stdMap, geoLayer], zoomControl: false });
+    
+    customPinsLayer = L.layerGroup().addTo(map);
+    boringLayer = L.layerGroup().addTo(map);
+
+    function updateGeoOpacity(val) { if(geoLayer) geoLayer.setOpacity(parseFloat(val)); }
+
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        document.querySelector(`[onclick="switchTab('${tabId}')"]`).classList.add('active');
+        document.getElementById(tabId).classList.add('active');
+    }
+
+    // --- 自動取得（シンプル版：中央の地質のみ更新） ---
+    map.on('moveend', function() {
+        if(document.getElementById('tab-geo').classList.contains('active')){
+            clearTimeout(fetchTimeout);
+            fetchTimeout = setTimeout(() => {
+                const center = map.getCenter();
+                getGeologyData(center.lat, center.lng, false); // false = 周辺サンプリングなし
+            }, 600);
+        }
+    });
+
+    // --- 現在地から取得 ---
+    function fetchLocationAndGeology() {
+        const display = document.getElementById('result-display');
+        if (!navigator.geolocation) { display.innerHTML = "<span style='color:red;'>GPS非対応端末です</span>"; return; }
+        display.innerHTML = `<span class="loading-spinner"></span><span style="color:#3498db; font-weight:bold;">GPS測位中...</span>`;
+
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const lat = position.coords.latitude; const lng = position.coords.longitude; const acc = position.coords.accuracy;
+                map.setView([lat, lng], 15);
+                if (!gpsMarker) {
+                    gpsCircle = L.circle([lat, lng], { radius: acc, color: "#3498db", weight: 1, opacity: 0.5, fillOpacity: 0.12 }).addTo(map);
+                    gpsMarker = L.circleMarker([lat, lng], { radius: 7, fillColor: "#2980b9", color: "#fff", weight: 3, fillOpacity: 1 }).addTo(map);
+                } else {
+                    gpsMarker.setLatLng([lat, lng]); gpsCircle.setLatLng([lat, lng]); gpsCircle.setRadius(acc);
+                }
+                getGeologyData(lat, lng, true); // true = 周辺サンプリングあり
+            },
+            (error) => { display.innerHTML = "<span style='color:red;'>位置情報の取得失敗</span>"; },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+    }
+
+    // --- 地図中央をピン留めして周辺地質を取得 ---
+    function registerCenterPin() {
+        const center = map.getCenter();
+        const lat = center.lat; const lng = center.lng;
+        
+        // マーカを立てる
+        L.marker([lat, lng], {
+            icon: L.divIcon({ className: 'custom-pin', html: '📌', iconSize: [20, 20], iconAnchor: [10, 20] })
+        }).addTo(customPinsLayer);
+        
+        // 詳細解析（周辺サンプリング実行）
+        getGeologyData(lat, lng, true);
+    }
+
+    // --- 産総研API連携（周辺サンプリング機能付き） ---
+    async function getGeologyData(lat, lng, withSurroundings) {
+        const display = document.getElementById('result-display');
+        display.innerHTML = `<span class="loading-spinner"></span><span style="color:#3498db; font-weight:bold;">地質データ解析中...</span>`;
+
+        try {
+            // ① 中央点の取得
+            const res = await fetch(`https://gbank.gsj.jp/seamless/v2/api/1.2/legend.json?point=${lat},${lng}`);
+            if (!res.ok) {
+                display.innerHTML = `<span class="label">解析座標: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span><span style='color:#e74c3c;'>データが存在しません（海域等）</span>`;
+                currentGeoData = null;
+                return;
+            }
+            const data = await res.json();
+            
+            const age = data.age_ja && data.age_ja.trim() !== "" ? data.age_ja : "未定義 (火成岩・変成岩等のため)";
+            const lithology = data.lithology_ja || "不明";
+            
+            // 【変更】産総研APIが持つ地層関連の属性を個別に変数へ格納（CSV出力のため）
+            const group = data.group_ja && data.group_ja.trim() !== "" ? data.group_ja : "";
+            const formation = data.formation_ja && data.formation_ja.trim() !== "" ? data.formation_ja : "";
+            const title_ja = data.title_ja && data.title_ja.trim() !== "" ? data.title_ja : "";
+
+            let titleArr = [];
+            if (group !== "") titleArr.push(`層群: ${group}`);
+            if (formation !== "") titleArr.push(`累層: ${formation}`);
+            if (title_ja !== "") titleArr.push(`詳細: ${title_ja}`);
+            
+            const title = titleArr.length > 0 ? titleArr.join("<br>") : "固有の地層名なし";
+
+            let html = `
+                <span class="label">📍 ターゲット座標: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
+                <span class="value" style="color:#27ae60; font-size:15px; margin-bottom:4px;">${lithology}</span>
+                <div style="font-size:11px; color:#555; background:#f0f3f4; padding:6px; border-radius:4px; margin-bottom:4px;">
+                    <b style="color:#2c3e50;">時代:</b> ${age}
+                </div>
+                <div style="font-size:11px; color:#555; background:#f0f3f4; padding:6px; border-radius:4px;">
+                    <b style="color:#2c3e50;">地層・岩体名:</b><br>${title}
+                </div>
+            `;
+
+            let surroundingStr = "";
+
+            // ② 周辺サンプリング（十字方向 約50mズレ）※withSurroundingsがtrueの場合のみ
+            if (withSurroundings) {
+                display.innerHTML = html + `<hr style="border:0; border-top:1px dashed #ccc;"><span class="loading-spinner"></span><span style="font-size:10px; color:#7f8c8d;">周辺(約50m)の地質境界を探索中...</span>`;
+                
+                const offset = 0.00045; 
+                const points = [
+                    {lat: lat + offset, lng: lng}, {lat: lat - offset, lng: lng},
+                    {lat: lat, lng: lng + offset}, {lat: lat, lng: lng - offset}
+                ];
+                
+                let surroundingLithologies = new Set();
+                
+                const promises = points.map(p => fetch(`https://gbank.gsj.jp/seamless/v2/api/1.2/legend.json?point=${p.lat},${p.lng}`).then(r => r.ok ? r.json() : null).catch(()=>null));
+                const results = await Promise.all(promises);
+                
+                results.forEach(res => {
+                    if (res && res.lithology_ja && res.lithology_ja !== lithology) {
+                        surroundingLithologies.add(res.lithology_ja);
+                    }
+                });
+
+                html += `<hr style="border:0; border-top:1px dashed #ccc; margin:8px 0;"><span class="label">🔍 周辺50m圏内に見られる他の地質（推測）</span>`;
+                if (surroundingLithologies.size > 0) {
+                    surroundingStr = Array.from(surroundingLithologies).join(' / ');
+                    surroundingLithologies.forEach(l => {
+                        html += `<span class="surrounding-item">${l}</span>`;
+                    });
+                } else {
+                    surroundingStr = "周辺も同一地質";
+                    html += `<span style="font-size:11px; color:#7f8c8d;">※周辺もすべて同じ地質です</span>`;
+                }
+            }
+
+            display.innerHTML = html;
+
+            // 【追加】取得したデータを一時保存（記録用）
+            currentGeoData = {
+                lat: lat,
+                lng: lng,
+                age: age,
+                lithology: lithology,
+                group: group,
+                formation: formation,
+                title: title_ja,
+                surrounding: surroundingStr
+            };
+
+        } catch (error) {
+            display.innerHTML = `<span style='color:#e74c3c;'>通信エラーが発生しました。</span>`;
+        }
+    }
+
+    // --- 【追加】地質データとコメントのリスト記録 ---
+    function recordGeoData() {
+        if (!currentGeoData) {
+            alert("先に「現在地取得」または「中央にピン留め」で地質データを解析してください。");
+            return;
+        }
+        const comment = document.getElementById('geo-comment').value.trim();
+        recordIdCounter++;
+        
+        geoRecords.push({
+            id: recordIdCounter,
+            ...currentGeoData,
+            comment: comment
+        });
+        
+        document.getElementById('record-count').innerText = geoRecords.length;
+        document.getElementById('geo-comment').value = ""; // 入力欄をクリア
+        alert(`データ(No.${recordIdCounter})を記録しました。`);
+    }
+
+    // --- 【追加】記録データ(CSV)のエクスポート ---
+    window.exportGeoCSV = function() {
+        if(geoRecords.length === 0) { alert("出力する記録がありません。先にデータを記録してください。"); return; }
+        const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+        // 層群、累層などの項目を独立して出力
+        let csvContent = "No,緯度(Lat),経度(Lng),時代,岩相(種類),層群,累層,地層名・詳細,周辺(約50m)の地質,技術者コメント\n";
+        
+        geoRecords.forEach(r => {
+            const escapeCSV = (str) => `"${(str||'').replace(/"/g, '""')}"`;
+            csvContent += `${r.id},${r.lat.toFixed(6)},${r.lng.toFixed(6)},${escapeCSV(r.age)},${escapeCSV(r.lithology)},${escapeCSV(r.group)},${escapeCSV(r.formation)},${escapeCSV(r.title)},${escapeCSV(r.surrounding)},${escapeCSV(r.comment)}\n`;
+        });
+        
+        const blob = new Blob([bom, csvContent], { type: "text/csv;charset=utf-8;" });
+        const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "地質踏査_所見記録.csv"; link.click();
+    };
+
+    // --- 【修正】地質図スクリーンショットの保存（スマホブラウザ対策版） ---
+    window.exportGeoScreenshot = async function() {
+        const captureArea = document.querySelector('.map-container-layer');
+        if (!captureArea || typeof html2canvas === 'undefined') {
+            alert("機能の準備ができていません。");
+            return;
+        }
+        
+        // 処理中であることをユーザーに伝えるため、ボタンの表示を変える
+        const btn = document.querySelector('.btn-dark');
+        const origText = btn.innerHTML;
+        btn.innerHTML = '<span class="loading-spinner" style="width:12px; height:12px; border-width:2px; margin-right:4px;"></span>保存中...';
+        btn.disabled = true; // 連打防止
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        html2canvas(captureArea, { useCORS: true, allowTaint: false, scale: 2 }).then(canvas => {
+            // スマホブラウザ対策：DataURLではなくBlob(ファイルオブジェクト)に変換してダウンロード
+            canvas.toBlob(function(blob) {
+                if (!blob) {
+                    alert('画像のデータ変換に失敗しました。');
+                    btn.innerHTML = origText;
+                    btn.disabled = false;
+                    return;
+                }
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a'); 
+                link.download = '地質図_現場スクリーンショット.jpg'; 
+                link.href = url; 
+                document.body.appendChild(link); // DOMに追加（一部ブラウザの沈黙対策）
+                link.click();
+                document.body.removeChild(link);
+                
+                // メモリ解放
+                setTimeout(() => URL.revokeObjectURL(url), 100);
+                
+                // 成功を通知してボタンを元に戻す
+                btn.innerHTML = '✅ 保存完了';
+                setTimeout(() => { 
+                    btn.innerHTML = origText; 
+                    btn.disabled = false;
+                }, 2000);
+            }, 'image/jpeg', 0.95);
+        }).catch(err => {
+            console.error(err);
+            alert('画像の生成に失敗しました。\n詳細: ' + err.message);
+            btn.innerHTML = origText;
+            btn.disabled = false;
+        });
+    };
+
+    // --- ボーリングデータ（CSV）インポート処理 ---
+    function importBoringData(input) {
+        const file = input.files[0];
+        const statusEl = document.getElementById('boring-status');
+        if (!file) return;
+        
+        statusEl.innerHTML = `<span class="loading-spinner"></span> 読み込み中...`;
+        
+        const reader = new FileReader();
+        // Shift_JIS (日本の官公庁データに多い) を想定、文字化けする場合はUTF-8をフォールバック
+        reader.readAsText(file, 'Shift_JIS'); 
+        
+        reader.onload = function(e) {
+            let text = e.target.result;
+            if (text.includes("")) { // 文字化け判定（雑ですが）
+                 const readerUtf8 = new FileReader();
+                 readerUtf8.onload = function(e2) { processBoringCSV(e2.target.result, statusEl); };
+                 readerUtf8.readAsText(file, 'UTF-8');
+                 return;
+            }
+            processBoringCSV(text, statusEl);
+        };
+        input.value = ""; // リセット
+    }
+
+    function processBoringCSV(text, statusEl) {
+        const lines = text.split('\n');
+        if (lines.length < 2) { statusEl.innerHTML = "<span style='color:red;'>データがありません</span>"; return; }
+        
+        // ヘッダーのAIライクな解析（列番号の特定）
+        const header = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.replace(/"/g, "").trim());
+        
+        // 様々な表記ゆれに対応する列名検索
+        const idxLat = header.findIndex(h => h.includes("緯度") || h.toUpperCase() === "LAT" || h.toUpperCase() === "LATITUDE");
+        const idxLng = header.findIndex(h => h.includes("経度") || h.toUpperCase() === "LON" || h.toUpperCase() === "LONGITUDE" || h.toUpperCase() === "LNG");
+        const idxName = header.findIndex(h => h.includes("孔名") || h.includes("ボーリング名") || h.includes("調査名") || h.includes("名称"));
+        const idxDepth = header.findIndex(h => h.includes("深度") || h.includes("掘削長") || h.includes("深さ"));
+        const idxUrl = header.findIndex(h => h.includes("URL") || h.includes("リンク") || h.includes("柱状図"));
+
+        if (idxLat === -1 || idxLng === -1) {
+            statusEl.innerHTML = "<span style='color:red;'>エラー: CSVの中に「緯度」「経度」という列が見つかりません。</span>";
+            return;
+        }
+
+        let count = 0;
+        const bounds = []; // 読み込んだピンが収まる枠
+
+        for (let i = 1; i < lines.length; i++) {
+            if (!lines[i].trim()) continue;
+            const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+            
+            const lat = parseFloat(row[idxLat]);
+            const lng = parseFloat(row[idxLng]);
+            
+            if (!isNaN(lat) && !isNaN(lng)) {
+                const name = idxName !== -1 && row[idxName] ? row[idxName].replace(/"/g, "") : `データ${count+1}`;
+                const depth = idxDepth !== -1 && row[idxDepth] ? row[idxDepth].replace(/"/g, "") : "不明";
+                const url = idxUrl !== -1 && row[idxUrl] ? row[idxUrl].replace(/"/g, "") : "";
+
+                let popupHTML = `<div class="marker-popup-content">
+                                    <div class="marker-popup-title">📊 ${name}</div>
+                                    <b>緯度:</b> ${lat.toFixed(5)}<br>
+                                    <b>経度:</b> ${lng.toFixed(5)}<br>
+                                    <b>深度(掘削長):</b> ${depth} m<br>`;
+                if (url && (url.startsWith('http') || url.startsWith('www'))) {
+                    popupHTML += `<a href="${url}" target="_blank" style="display:inline-block; margin-top:5px; background:#3498db; color:#fff; padding:4px 8px; border-radius:4px; text-decoration:none;">柱状図リンク</a>`;
+                }
+                popupHTML += `</div>`;
+
+                // カスタムマーカー（ボーリングっぽく青色に）
+                const marker = L.circleMarker([lat, lng], { radius: 6, fillColor: "#e67e22", color: "#fff", weight: 2, fillOpacity: 0.9 })
+                                .bindPopup(popupHTML)
+                                .bindTooltip(name, {direction: 'top', offset: [0,-5], className:'permanent-marker-label'});
+                
+                boringLayer.addLayer(marker);
+                bounds.push([lat, lng]);
+                count++;
+            }
+        }
+
+        if (count > 0) {
+            map.fitBounds(bounds, { padding: [50, 50] });
+            statusEl.innerHTML = `<span style="color:#27ae60; font-weight:bold;">✅ 成功: ${count}件のボーリングデータをプロットしました。</span><br><span style="font-size:10px; color:#555;">ピンをタップすると詳細情報を確認できます。</span>`;
+        } else {
+            statusEl.innerHTML = "<span style='color:red;'>有効な位置情報データがありませんでした。</span>";
+        }
+    }
+
+    function clearBoringMarkers() {
+        boringLayer.clearLayers();
+        customPinsLayer.clearLayers();
+        document.getElementById('boring-status').innerHTML = "<span style='color:#95a5a6;'>クリアしました。</span>";
+    }
+
+</script>
+</body>
+</html>
