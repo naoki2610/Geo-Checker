@@ -388,6 +388,10 @@
     function fetchLocationAndGeology() {
         const display = document.getElementById('result-display');
         if (!navigator.geolocation) { alert("GPS非対応端末です"); return; }
+        
+        // 【バグ修正①】新しい地点を測位する時に初めて、前回のコメントをリセットする
+        document.getElementById('geo-comment').value = "";
+
         display.innerHTML = `<span class="loading-spinner"></span><span style="color:#3498db; font-weight:bold;">GPS測位中...</span>`;
         enableActionButtons(false);
         openSheet(); 
@@ -417,6 +421,9 @@
     async function registerCenterPin() {
         const center = map.getCenter(); const lat = center.lat; const lng = center.lng;
         
+        // 【バグ修正②】新しい地点を解析する時に初めて、前回のコメントをリセットする
+        document.getElementById('geo-comment').value = "";
+
         if (bufferCircle) map.removeLayer(bufferCircle);
         bufferCircle = L.circle([lat, lng], { radius: 500, color: "#e74c3c", weight: 2, dashArray: "5, 5", opacity: 0.7, fillOpacity: 0.05 }).addTo(customPinsLayer);
         
@@ -445,7 +452,9 @@
             }
             const data = await res.json();
             
-            const age = data.age_ja && data.age_ja.trim() !== "" ? data.age_ja : "未定義 (火成岩・変成岩等のため)";
+            // 【修正】強引な決め打ちをやめ、客観的な事実のみを表示する
+            const age = data.age_ja && data.age_ja.trim() !== "" ? data.age_ja : "未定義 (データなし)";
+            
             const lithology = data.lithology_ja || "不明";
             const group = data.group_ja && data.group_ja.trim() !== "" ? data.group_ja : "";
             const formation = data.formation_ja && data.formation_ja.trim() !== "" ? data.formation_ja : "";
@@ -520,7 +529,10 @@
         geoRecords.push({ id: recordIdCounter, ...currentGeoData, comment: comment });
         
         document.getElementById('record-count').innerText = geoRecords.length;
-        document.getElementById('geo-comment').value = ""; 
+        
+        // 【根本原因の削除】記録ボタンを押した直後にコメントを消去しない（PDF出力のために残す）
+        // document.getElementById('geo-comment').value = ""; 
+        
         alert(`データ(No.${recordIdCounter})を記録しました。`);
         closeSheet(); 
     }
