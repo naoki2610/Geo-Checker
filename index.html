@@ -217,10 +217,10 @@
             </div>
 
             <div id="tab-boring" class="tab-content">
-                <div style="font-size:12px; color:#555; line-height:1.5; margin-bottom: 10px;">国土地盤情報等のオープンデータ(CSV)を地図にプロットします。※「緯度」「経度」の列を含むこと</div>
+                <div style="font-size:12px; color:#555; line-height:1.5; margin-bottom: 10px;">国土地盤情報等のオープンデータ(CSV)や、電子納品データ(XML)を地図にプロットします。</div>
                 <div class="file-input-wrapper">
-                    <label for="csv-import">📁 ボーリングCSVを選択して読込</label>
-                    <input type="file" id="csv-import" accept=".csv" onchange="importBoringData(this)">
+                    <label for="csv-import">📁 ボーリングCSV / XML を選択</label>
+                    <input type="file" id="csv-import" accept=".csv, .xml" onchange="importBoringData(this)">
                 </div>
                 <div class="result-box" id="boring-status" style="min-height:40px; margin: 10px 0;"><span style="color:#95a5a6;">データはありません。</span></div>
                 <button type="button" class="field-safe-btn btn-orange" style="height:40px;" onclick="clearBoringMarkers()">🗑️ 読み込んだピンをクリア</button>
@@ -816,6 +816,16 @@
             
             openSheet();
         } finally {
+            // 【最重要】撮影が終わったらすべてのUIとピンを確実に元に戻す
+            if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
+            if (coordPanel) coordPanel.style.display = 'block'; 
+            if (fabContainer) fabContainer.style.display = '';
+            if (attribution) attribution.style.display = '';
+            
+            if (customPinsLayer) customPinsLayer.addTo(map);
+            if (gpsMarker) gpsMarker.addTo(map);
+            if (gpsCircle) gpsCircle.addTo(map);
+
             loadingOverlay.style.display = 'none';
         }
     };
@@ -825,17 +835,86 @@
         const statusEl = document.getElementById('boring-status');
         if (!file) return;
         statusEl.innerHTML = `<span class="loading-spinner"></span> 読み込み中...`;
-        const reader = new FileReader(); reader.readAsText(file, 'Shift_JIS'); 
-        reader.onload = function(e) {
-            let text = e.target.result;
-            if (text.includes("")) { 
-                 const readerUtf8 = new FileReader();
-                 readerUtf8.onload = function(e2) { processBoringCSV(e2.target.result, statusEl); };
-                 readerUtf8.readAsText(file, 'UTF-8'); return;
-            }
-            processBoringCSV(text, statusEl);
-        };
+        
+        const ext = file.name.split('.').pop().toLowerCase();
+        const reader = new FileReader(); 
+        
+        if (ext === 'xml') {
+            reader.onload = function(e) { processBoringXML(e.target.result, statusEl); };
+            reader.readAsText(file, 'UTF-8');
+        } else {
+            reader.readAsText(file, 'Shift_JIS'); 
+            reader.onload = function(e) {
+                let text = e.target.result;
+                if (text.includes("")) { 
+                     const readerUtf8 = new FileReader();
+                     readerUtf8.onload = function(e2) { processBoringCSV(e2.target.result, statusEl); };
+                     readerUtf8.readAsText(file, 'UTF-8'); return;
+                }
+                processBoringCSV(text, statusEl);
+            };
+        }
         input.value = ""; 
+    }
+
+    // 【新規追加】電子納品XMLデータを解析してプロットするエンジン
+    function processBoringXML(xmlText, statusEl) {
+        try {
+            // 【バグ修正】XMLファイルの先頭にブラウザの表示テキスト等が混入している場合、
+            // 最初の「<」タグから始まるように不要な文字列を自動で切り落とす（ゴミ取り処理）
+            const startIndex = xmlText.indexOf('<');
+            if (startIndex !== -1) {
+                xmlText = xmlText.substring(startIndex);
+            }
+
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+
+            if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+                statusEl.innerHTML = "<span style='color:red;'>XMLの解析に失敗しました。</span>";
+                return;
+            }
+
+            // 度分秒を取得して10進法に変換
+            const latDeg = parseFloat(xmlDoc.getElementsByTagName("緯度_度")[0]?.textContent || 0);
+            const latMin = parseFloat(xmlDoc.getElementsByTagName("緯度_分")[0]?.textContent || 0);
+            const latSec = parseFloat(xmlDoc.getElementsByTagName("緯度_秒")[0]?.textContent || 0);
+            const lngDeg = parseFloat(xmlDoc.getElementsByTagName("経度_度")[0]?.textContent || 0);
+            const lngMin = parseFloat(xmlDoc.getElementsByTagName("経度_分")[0]?.textContent || 0);
+            const lngSec = parseFloat(xmlDoc.getElementsByTagName("経度_秒")[0]?.textContent || 0);
+
+            const lat = latDeg + (latMin / 60) + (latSec / 3600);
+            const lng = lngDeg + (lngMin / 60) + (lngSec / 3600);
+
+            if (lat === 0 || lng === 0) {
+                statusEl.innerHTML = "<span style='color:red;'>XMLに有効な緯度経度が含まれていません。</span>";
+                return;
+            }
+
+            // 名称と深度の抽出（ボーリング名が無ければ調査名を使用）
+            let name = xmlDoc.getElementsByTagName("ボーリング名")[0]?.textContent;
+            if (!name || name.trim() === "") {
+                name = xmlDoc.getElementsByTagName("調査名")[0]?.textContent || "XMLデータ";
+            }
+            const depth = xmlDoc.getElementsByTagName("総掘進長")[0]?.textContent || "不明";
+
+            let popupHTML = `<div class="marker-popup-content"><div class="marker-popup-title">📊 ${name}</div><b>緯度:</b> ${lat.toFixed(6)}<br><b>経度:</b> ${lng.toFixed(6)}<br><b>深度:</b> ${depth} m<br><span style="color:#8e44ad; font-size:10px; font-weight:bold;">電子納品XMLデータ</span></div>`;
+            
+            // XML用の特別なマーカー色（紫色）
+            const marker = L.circleMarker([lat, lng], { radius: 6, fillColor: "#8e44ad", color: "#fff", weight: 2, fillOpacity: 0.9 })
+                            .bindPopup(popupHTML)
+                            .bindTooltip(name, {direction: 'top', offset: [0,-5], className:'permanent-marker-label'});
+            
+            boringLayer.addLayer(marker);
+            map.setView([lat, lng], 15); // プロットした場所にズーム
+            
+            statusEl.innerHTML = `<span style="color:#27ae60; font-weight:bold;">✅ 成功: XMLデータのプロット完了</span>`;
+            closeSheet();
+
+        } catch (error) {
+            console.error(error);
+            statusEl.innerHTML = "<span style='color:red;'>XMLの読み込み中にエラーが発生しました。</span>";
+        }
     }
 
     function processBoringCSV(text, statusEl) {
