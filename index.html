@@ -12,22 +12,21 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
     <style>
-        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; background-color: #f4f6f9; }
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f6f9; }
         
-        .map-container-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-        #map { width: 100%; height: 100%; cursor: crosshair; background-color: #f4f6f9; }
+        .map-container-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; background-color: #f4f6f9; }
+        #map { width: 100%; height: 100%; cursor: crosshair; }
 
         .center-cursor {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             width: 32px; height: 32px; border: 2px solid #e74c3c; box-sizing: border-box; pointer-events: none; z-index: 1000;
-            box-shadow: 0 0 3px rgba(255,255,255,0.8), inset 0 0 3px rgba(255,255,255,0.8);
-            border-radius: 4px;
+            box-shadow: 0 0 3px rgba(255,255,255,0.8), inset 0 0 3px rgba(255,255,255,0.8); border-radius: 4px;
         }
         .center-cursor::before { content: ''; position: absolute; top: 6px; bottom: 6px; left: 13px; width: 2px; background: #e74c3c; }
         .center-cursor::after { content: ''; position: absolute; left: 6px; right: 6px; top: 13px; height: 2px; background: #e74c3c; }
 
         .analyze-btn-container {
-            position: absolute; bottom: calc(75px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+            position: absolute; bottom: calc(65px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
             z-index: 1500; transition: opacity 0.3s, transform 0.3s;
         }
         body.sheet-expanded .analyze-btn-container { opacity: 0; pointer-events: none; transform: translate(-50%, 20px); }
@@ -35,11 +34,12 @@
         .analyze-btn {
             pointer-events: auto; background: #e74c3c; color: #fff; border: 2px solid #fff; border-radius: 24px;
             padding: 12px 24px; font-size: 15px; font-weight: bold; box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4);
-            cursor: pointer; white-space: nowrap; transition: transform 0.1s; display: flex; align-items: center; gap: 6px;
+            cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap;
         }
         .analyze-btn:active { transform: scale(0.95); }
 
-        .fab-container { position: absolute; right: 15px; z-index: 2000; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        /* 【修正】現在地ボタンを右上に固定して隠れないようにする */
+        .fab-container { position: absolute; top: 15px; right: 15px; z-index: 2000; }
         .fab {
             width: 50px; height: 50px; background: #3498db; color: white; border-radius: 50%; border: 2px solid #fff;
             display: flex; justify-content: center; align-items: center; font-size: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
@@ -48,15 +48,14 @@
         .fab:active { background: #2980b9; transform: scale(0.95); }
 
         .coord-info-panel {
-            position: absolute; top: 10px; right: 10px; z-index: 999;
+            position: absolute; top: 75px; right: 15px; z-index: 999;
             background: rgba(255, 255, 255, 0.95); border: 2px solid #2c3e50; border-radius: 6px;
             padding: 8px 12px; font-size: 11px; color: #333; line-height: 1.4;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2); display: none; 
-            pointer-events: none; text-align: left;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2); display: none; pointer-events: none; text-align: left;
         }
         .coord-info-panel b { color: #2c3e50; }
 
-        .compass-rose { position: absolute; top: 10px; left: 10px; z-index: 999; background: rgba(255, 255, 255, 0.9); border: 1px solid #333; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+        .compass-rose { position: absolute; top: 15px; left: 15px; z-index: 999; background: rgba(255, 255, 255, 0.9); border: 1px solid #333; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; pointer-events: none; }
         .compass-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 14px solid #c0392b; position: relative; top: -7px; }
         .compass-arrow::after { content: ''; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 14px solid #2c3e50; position: absolute; top: 14px; left: -5px; }
         .compass-n { position: absolute; top: 1px; font-size: 9px; font-weight: bold; color: #c0392b; }
@@ -75,9 +74,6 @@
         }
         body.sheet-collapsed .bottom-sheet { transform: translateY(calc(100% - 50px - env(safe-area-inset-bottom))); }
         body.sheet-expanded .bottom-sheet { transform: translateY(0); }
-        
-        body.sheet-collapsed .fab-container { transform: translateY(calc(-65px - env(safe-area-inset-bottom))); }
-        body.sheet-expanded .fab-container { transform: translateY(calc(-75vh - 15px)); }
 
         .sheet-header { height: 50px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; cursor: pointer; background: #fdfdfd; border-radius: 20px 20px 0 0; border-bottom: 1px solid #eee; position: relative; }
         .sheet-handle-wrapper { position: absolute; top: 0; left: 0; right: 0; height: 16px; display: flex; justify-content: center; align-items: center; }
@@ -87,7 +83,6 @@
         body.sheet-collapsed .sheet-toggle-icon { transform: rotate(180deg); } 
 
         .sheet-content { padding: 15px; overflow-y: auto; flex: 1; }
-
         .tabs { display: flex; gap: 5px; background: #eee; padding: 4px; border-radius: 8px; margin-bottom: 10px; }
         .tab-btn { flex: 1; padding: 10px; text-align: center; font-size: 13px; font-weight: bold; color: #555; background: #fff; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; transition: 0.2s; }
         .tab-btn.active { background: #3498db; color: white; border-color: #2980b9; }
@@ -120,7 +115,6 @@
         .custom-pin { font-size: 24px; text-align: center; line-height: 1; filter: drop-shadow(0px 3px 3px rgba(0,0,0,0.5)); }
         textarea.custom-textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; resize: vertical; font-family: inherit; min-height: 70px; }
 
-        /* PDF出力中の全画面ローディング */
         #loading-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.8); z-index: 999999; flex-direction: column; justify-content: center; align-items: center; color: white;
@@ -130,6 +124,7 @@
 </head>
 <body class="sheet-collapsed">
 
+<!-- 全画面ローディング -->
 <div id="loading-overlay">
     <div class="big-spinner"></div>
     <div style="font-weight: bold; font-size: 18px; letter-spacing: 1px;">PDF台帳を構築中...</div>
@@ -554,13 +549,34 @@
         btn.disabled = true; 
         
         closeSheet(); 
+        
+        // 【重要】UIとマーカーの完全ステルス化（※赤十字カーソルは証拠として残す）
         const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
+        const coordPanel = document.getElementById('coord-info-panel');
+        const fabContainer = document.querySelector('.fab-container');
+        const attribution = document.querySelector('.leaflet-control-attribution');
+
         if (analyzeBtnWrap) analyzeBtnWrap.style.display = 'none';
+        if (coordPanel) coordPanel.style.display = 'none'; 
+        if (fabContainer) fabContainer.style.display = 'none';
+        if (attribution) attribution.style.display = 'none';
+
+        if (customPinsLayer) map.removeLayer(customPinsLayer);
+        if (gpsMarker) map.removeLayer(gpsMarker);
+        if (gpsCircle) map.removeLayer(gpsCircle);
         
         await new Promise(resolve => setTimeout(resolve, 800)); 
         
         html2canvas(captureArea, { useCORS: true, allowTaint: false, scale: 2 }).then(canvas => {
+            // ステルス解除
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
+            if (coordPanel) coordPanel.style.display = 'block'; 
+            if (fabContainer) fabContainer.style.display = '';
+            if (attribution) attribution.style.display = '';
+            if (customPinsLayer) customPinsLayer.addTo(map);
+            if (gpsMarker) gpsMarker.addTo(map);
+            if (gpsCircle) gpsCircle.addTo(map);
+
             canvas.toBlob(function(blob) {
                 if (!blob) { alert('変換失敗'); btn.innerHTML = origText; btn.disabled = false; return; }
                 const url = URL.createObjectURL(blob);
@@ -574,11 +590,18 @@
             }, 'image/jpeg', 0.95);
         }).catch(err => {
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
+            if (coordPanel) coordPanel.style.display = 'block'; 
+            if (fabContainer) fabContainer.style.display = '';
+            if (attribution) attribution.style.display = '';
+            if (customPinsLayer) customPinsLayer.addTo(map);
+            if (gpsMarker) gpsMarker.addTo(map);
+            if (gpsCircle) gpsCircle.addTo(map);
+            
             alert('生成失敗\n' + err.message); btn.innerHTML = origText; btn.disabled = false; openSheet();
         });
     };
 
-    // --- 【完全解決】キャプチャ時のみ地図をA4比率に変形させるウルトラC（アニメーション停止・再配置版） ---
+    // --- 【完全改修版】A4出力エンジン（完全ステルス処理搭載・カーソル維持） ---
     window.exportA4Report = async function() {
         if (!currentGeoData || !window.jspdf) { alert("PDF生成ライブラリの読み込み待ち、またはデータがありません。"); return; }
         
@@ -591,10 +614,20 @@
         
         closeSheet();
         
+        // 【重要】PDF撮影時に邪魔になるUI（ボタン、パネル、ピン、クレジット等）をすべて非表示にする。赤十字カーソルは残す。
         const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
         const coordPanel = document.getElementById('coord-info-panel');
+        const fabContainer = document.querySelector('.fab-container');
+        const attribution = document.querySelector('.leaflet-control-attribution');
+
         if (analyzeBtnWrap) analyzeBtnWrap.style.display = 'none';
         if (coordPanel) coordPanel.style.display = 'none'; 
+        if (fabContainer) fabContainer.style.display = 'none';
+        if (attribution) attribution.style.display = 'none';
+
+        if (customPinsLayer) map.removeLayer(customPinsLayer);
+        if (gpsMarker) map.removeLayer(gpsMarker);
+        if (gpsCircle) map.removeLayer(gpsCircle);
         
         await new Promise(resolve => setTimeout(resolve, 600)); 
 
@@ -615,9 +648,6 @@
             const origCompassTop = compass.style.top;
             const origCompassLeft = compass.style.left;
 
-            const attribution = document.querySelector('.leaflet-control-attribution');
-            const origAttrDisplay = attribution ? attribution.style.display : '';
-
             // 1. A4の画像枠に最適な横長サイズ（724px × 400px）に強制リサイズ
             mapContainer.style.width = '724px';
             mapContainer.style.height = '400px';
@@ -631,13 +661,12 @@
             compass.style.left = '15px';
             scaleContainer.style.bottom = '15px';
             scaleContainer.style.right = '15px';
-            if (attribution) attribution.style.display = 'none';
 
             // 3. 【最重要】地図のアニメーション移動を強制停止し、中心をピタッと合わせる
             map.invalidateSize({animate: false});
             map.setView([currentGeoData.lat, currentGeoData.lng], map.getZoom(), {animate: false});
             
-            // 地図タイルが完全に読み込まれるまで長めに待つ（ピンズレ・ボケ防止）
+            // 地図タイルが完全に読み込まれるまで長めに待つ
             await new Promise(resolve => setTimeout(resolve, 1500));
 
             // ① 完璧な横長比率になった地図を高画質でスクショ撮影
@@ -662,7 +691,6 @@
             scaleContainer.style.right = origScaleRight || '';
             compass.style.top = origCompassTop || '';
             compass.style.left = origCompassLeft || '';
-            if (attribution) attribution.style.display = origAttrDisplay;
             
             map.invalidateSize({animate: false});
             map.setView([currentGeoData.lat, currentGeoData.lng], map.getZoom(), {animate: false});
@@ -756,6 +784,12 @@
             
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
             if (coordPanel) coordPanel.style.display = 'block'; 
+            if (fabContainer) fabContainer.style.display = '';
+            if (attribution) attribution.style.display = '';
+            
+            if (customPinsLayer) customPinsLayer.addTo(map);
+            if (gpsMarker) gpsMarker.addTo(map);
+            if (gpsCircle) gpsCircle.addTo(map);
 
             btn.innerHTML = '✅ PDF保存完了';
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; openSheet(); }, 2000);
@@ -764,10 +798,15 @@
             alert('レポート作成に失敗しました\n' + err.message);
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
             if (coordPanel) coordPanel.style.display = 'block'; 
+            if (fabContainer) fabContainer.style.display = '';
+            if (attribution) attribution.style.display = '';
+            if (customPinsLayer) customPinsLayer.addTo(map);
+            if (gpsMarker) gpsMarker.addTo(map);
+            if (gpsCircle) gpsCircle.addTo(map);
+            
             btn.innerHTML = origText;
             btn.disabled = false;
             
-            // エラー時も地図サイズを確実に戻す
             const mapContainer = document.querySelector('.map-container-layer');
             mapContainer.style.width = '100%';
             mapContainer.style.height = '100%';
