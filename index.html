@@ -38,7 +38,6 @@
         }
         .analyze-btn:active { transform: scale(0.95); }
 
-        /* 【修正】現在地ボタンを右上に固定して隠れないようにする */
         .fab-container { position: absolute; top: 15px; right: 15px; z-index: 2000; }
         .fab {
             width: 50px; height: 50px; background: #3498db; color: white; border-radius: 50%; border: 2px solid #fff;
@@ -500,7 +499,9 @@
                 html += `<div style="font-size:12px; line-height:1.6; color:#333;">${surroundingArrHtml.join('<br>')}</div>`;
             }
             display.innerHTML = html;
-            currentGeoData = { lat, lng, elevation, accuracy, age, lithology, group, formation, title: title_ja, surrounding: surroundingStr };
+            
+            // 産総研データの場合は isBoring フラグを立てない
+            currentGeoData = { isBoring: false, lat, lng, elevation, accuracy, age, lithology, group, formation, title: title_ja, surrounding: surroundingStr };
             enableActionButtons(true); 
 
         } catch (error) {
@@ -509,9 +510,40 @@
                 <span style='color:#e74c3c; font-weight:bold; font-size:14px; display:block; margin:8px 0;'>⚠️ 通信圏外です</span>
                 <span style="font-size:12px; color:#555;">APIから地質情報を取得できませんでしたが、<b style="color:#e74c3c;">取得した座標とコメントの記録は可能です。</b><br>露頭の所見を入力して「記録」ボタンを押してください。</span>
             `;
-            currentGeoData = { lat, lng, elevation, accuracy, age: "オフライン", lithology: "取得不可", group: "", formation: "", title: "", surrounding: "" };
+            currentGeoData = { isBoring: false, lat, lng, elevation, accuracy, age: "オフライン", lithology: "取得不可", group: "", formation: "", title: "", surrounding: "" };
             enableActionButtons(true);
         }
+    }
+
+    // 【新規追加】ボーリングピンをタップした時に、その情報をレポート対象としてセットする関数
+    function setBoringDataToReport(data) {
+        const display = document.getElementById('result-display');
+        
+        let soilHtml = data.soilStr ? `<div style="font-size:12px; color:#555; background:#f0f3f4; padding:6px; border-radius:4px; max-height: 150px; overflow-y: auto; margin-top:4px;"><b style="color:#2c3e50;">柱状図 (土質・N値):</b><br>${data.soilStr}</div>` : '';
+        
+        const html = `
+            <span class="label">📍 ボーリングデータ選択中</span>
+            <span class="value" style="color:#8e44ad; font-size:16px; margin-bottom:6px;">${data.name}</span>
+            <div style="font-size:12px; color:#555; background:#f0f3f4; padding:6px; border-radius:4px; margin-bottom:4px;"><b style="color:#2c3e50;">座標:</b> Lat: ${data.lat.toFixed(5)}, Lng: ${data.lng.toFixed(5)}</div>
+            <div style="font-size:12px; color:#555; background:#f0f3f4; padding:6px; border-radius:4px;"><b style="color:#2c3e50;">孔口標高:</b> ${data.elevation}m / <b style="color:#2c3e50;">掘進長:</b> ${data.depth}m</div>
+            ${soilHtml}
+        `;
+        display.innerHTML = html;
+
+        currentGeoData = {
+            isBoring: true,
+            lat: data.lat,
+            lng: data.lng,
+            elevation: data.elevation,
+            depth: data.depth,
+            accuracy: 0,
+            title: data.name,
+            surrounding: data.soilStr || "柱状図データなし"
+        };
+        enableActionButtons(true);
+        
+        // ユーザーに「地質チェッカー」タブでレポートが出せることをアピールするためタブを切り替える
+        switchTab('tab-geo'); 
     }
 
     function recordGeoData() {
@@ -601,7 +633,7 @@
         });
     };
 
-    // --- 【完全改修版】A4出力エンジン（完全ステルス処理搭載・カーソル維持） ---
+    // --- 【完全改修版】A4出力エンジン（ボーリングデータ連携対応） ---
     window.exportA4Report = async function() {
         if (!currentGeoData || !window.jspdf) { alert("PDF生成ライブラリの読み込み待ち、またはデータがありません。"); return; }
         
@@ -695,7 +727,7 @@
             map.invalidateSize({animate: false});
             map.setView([currentGeoData.lat, currentGeoData.lng], map.getZoom(), {animate: false});
             
-            // ② テキストデータの準備
+            // ② テキストデータの準備（産総研地質データか、ボーリングデータかで分岐）
             const now = new Date();
             const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${("0"+now.getMinutes()).slice(-2)}`;
             let accStr = currentGeoData.accuracy ? ` (GPS誤差: ±${Math.round(currentGeoData.accuracy)}m)` : "";
@@ -708,15 +740,34 @@
                 xyStr = `第${zone}系 / X(南北): ${xy[1].toFixed(3)}, Y(東西): ${xy[0].toFixed(3)}`;
             }
             
-            const geo1Str = `【時代】${currentGeoData.age} <br>【岩相】${currentGeoData.lithology}`;
+            let row4Th, geo1Str, row5Th, titleStr, row6Th, surroundingStr;
             
-            let titleStr = "";
-            if(currentGeoData.group) titleStr += `層群: ${currentGeoData.group}<br>`;
-            if(currentGeoData.formation) titleStr += `累層: ${currentGeoData.formation}<br>`;
-            if(currentGeoData.title) titleStr += `詳細: ${currentGeoData.title}<br>`;
-            titleStr = titleStr || "固有の地層名なし";
+            if (currentGeoData.isBoring) {
+                // --- ボーリングデータ用の表構成 ---
+                row4Th = "深度 / 標高";
+                geo1Str = `【掘進長】${currentGeoData.depth}m <br>【孔口標高】${currentGeoData.elevation}m`;
+                
+                row5Th = "調査名・孔名";
+                titleStr = currentGeoData.title;
+                
+                row6Th = "柱状図(土質・N値)";
+                surroundingStr = currentGeoData.surrounding;
+            } else {
+                // --- 通常の産総研地質データ用の表構成 ---
+                row4Th = "時代 / 岩相";
+                geo1Str = `【時代】${currentGeoData.age} <br>【岩相】${currentGeoData.lithology}`;
+                
+                row5Th = "地層名・詳細";
+                titleStr = "";
+                if(currentGeoData.group) titleStr += `層群: ${currentGeoData.group}<br>`;
+                if(currentGeoData.formation) titleStr += `累層: ${currentGeoData.formation}<br>`;
+                if(currentGeoData.title) titleStr += `詳細: ${currentGeoData.title}<br>`;
+                titleStr = titleStr || "固有の地層名なし";
+                
+                row6Th = "周辺500m";
+                surroundingStr = currentGeoData.surrounding ? currentGeoData.surrounding.replace(/ \/ /g, '<br>') : ""; 
+            }
             
-            const surroundingStr = currentGeoData.surrounding.replace(/ \/ /g, '<br>'); 
             const commentStr = comment.replace(/\n/g, '<br>') || "(コメントなし)";
             
             // ③ A4出力用のレイアウトコンテナを構築
@@ -742,9 +793,9 @@
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5; width:22%;">調査日時</th><td style="border:1px solid #333; padding:8px;">${dateStr}</td></tr>
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">座標・標高</th><td style="border:1px solid #333; padding:8px;">${coord1Str}</td></tr>
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">平面直角座標</th><td style="border:1px solid #333; padding:8px;">${xyStr}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">時代 / 岩相</th><td style="border:1px solid #333; padding:8px;">${geo1Str}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">地層名・詳細</th><td style="border:1px solid #333; padding:8px;">${titleStr}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">周辺500m</th><td style="border:1px solid #333; padding:8px; line-height: 1.6;">${surroundingStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">${row4Th}</th><td style="border:1px solid #333; padding:8px;">${geo1Str}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">${row5Th}</th><td style="border:1px solid #333; padding:8px;">${titleStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5;">${row6Th}</th><td style="border:1px solid #333; padding:8px; line-height: 1.6;">${surroundingStr}</td></tr>
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:8px; background:#f5f5f5; min-height:100px; vertical-align:top;">技術者所見</th><td style="border:1px solid #333; padding:8px; vertical-align:top; font-weight:bold; color:#111;">${commentStr}</td></tr>
                 </table>
             `;
@@ -857,11 +908,9 @@
         input.value = ""; 
     }
 
-    // 【新規追加】電子納品XMLデータを解析してプロットするエンジン
+    // 【進化版】電子納品XMLデータを解析し、柱状図データも抽出するエンジン
     function processBoringXML(xmlText, statusEl) {
         try {
-            // 【バグ修正】XMLファイルの先頭にブラウザの表示テキスト等が混入している場合、
-            // 最初の「<」タグから始まるように不要な文字列を自動で切り落とす（ゴミ取り処理）
             const startIndex = xmlText.indexOf('<');
             if (startIndex !== -1) {
                 xmlText = xmlText.substring(startIndex);
@@ -891,24 +940,72 @@
                 return;
             }
 
-            // 名称と深度の抽出（ボーリング名が無ければ調査名を使用）
+            // 基本情報の抽出
             let name = xmlDoc.getElementsByTagName("ボーリング名")[0]?.textContent;
             if (!name || name.trim() === "") {
                 name = xmlDoc.getElementsByTagName("調査名")[0]?.textContent || "XMLデータ";
             }
             const depth = xmlDoc.getElementsByTagName("総掘進長")[0]?.textContent || "不明";
+            const elevation = xmlDoc.getElementsByTagName("孔口標高")[0]?.textContent || "不明";
 
-            let popupHTML = `<div class="marker-popup-content"><div class="marker-popup-title">📊 ${name}</div><b>緯度:</b> ${lat.toFixed(6)}<br><b>経度:</b> ${lng.toFixed(6)}<br><b>深度:</b> ${depth} m<br><span style="color:#8e44ad; font-size:10px; font-weight:bold;">電子納品XMLデータ</span></div>`;
+            // ----------------------------------------------------
+            // 【新規実装】柱状図データ（土質・岩種）の抽出
+            // ----------------------------------------------------
+            let soilData = [];
+            const soilNodes = xmlDoc.getElementsByTagName("土質岩種区分");
+            for (let i = 0; i < soilNodes.length; i++) {
+                const bottomDepth = soilNodes[i].getElementsByTagName("土質岩種区分_下端深度")[0]?.textContent || "";
+                const soilType = soilNodes[i].getElementsByTagName("土質岩種区分_土質岩種区分1")[0]?.textContent || "";
+                if(bottomDepth && soilType) {
+                    soilData.push(`深度 ~${parseFloat(bottomDepth).toFixed(2)}m : ${soilType}`);
+                }
+            }
             
-            // XML用の特別なマーカー色（紫色）
+            // ----------------------------------------------------
+            // 【新規実装】標準貫入試験（N値）データの抽出
+            // ----------------------------------------------------
+            const nNodes = xmlDoc.getElementsByTagName("標準貫入試験");
+            let nValueData = [];
+            for (let i = 0; i < nNodes.length; i++) {
+                const nDepth = nNodes[i].getElementsByTagName("標準貫入試験_開始深度")[0]?.textContent || "";
+                const nVal = nNodes[i].getElementsByTagName("標準貫入試験_合計打撃回数")[0]?.textContent || "";
+                if(nDepth && nVal) {
+                    nValueData.push(`N値:${nVal} (${parseFloat(nDepth).toFixed(2)}m)`);
+                }
+            }
+            
+            // 柱状図情報のテキスト組み立て
+            let soilStr = soilData.length > 0 ? soilData.join("<br>") : "柱状図データなし";
+            if (nValueData.length > 0) {
+                if (nValueData.length > 15) {
+                    soilStr += `<br><br><b style="color:#2c3e50;">代表N値データ:</b><br>` + nValueData.slice(0, 15).join(" / ") + " ...他";
+                } else {
+                    soilStr += `<br><br><b style="color:#2c3e50;">N値データ:</b><br>` + nValueData.join(" / ");
+                }
+            }
+
+            let popupHTML = `<div class="marker-popup-content"><div class="marker-popup-title">📊 ${name}</div><b>緯度:</b> ${lat.toFixed(6)}<br><b>経度:</b> ${lng.toFixed(6)}<br><b>深度:</b> ${depth} m<br><span style="color:#8e44ad; font-size:10px; font-weight:bold;">👉 タップしてレポートを作成</span></div>`;
+            
+            // 紫色のマーカーを作成し、クリックイベントを付与
             const marker = L.circleMarker([lat, lng], { radius: 6, fillColor: "#8e44ad", color: "#fff", weight: 2, fillOpacity: 0.9 })
                             .bindPopup(popupHTML)
-                            .bindTooltip(name, {direction: 'top', offset: [0,-5], className:'permanent-marker-label'});
+                            .bindTooltip(name, {direction: 'top', offset: [0,-5], className:'permanent-marker-label'})
+                            .on('click', function() {
+                                // 【連携機能】ピンをタップしたらレポート情報を上書きする
+                                setBoringDataToReport({
+                                    lat: lat,
+                                    lng: lng,
+                                    name: name,
+                                    depth: depth,
+                                    elevation: elevation,
+                                    soilStr: soilStr
+                                });
+                            });
             
             boringLayer.addLayer(marker);
-            map.setView([lat, lng], 15); // プロットした場所にズーム
+            map.setView([lat, lng], 15); 
             
-            statusEl.innerHTML = `<span style="color:#27ae60; font-weight:bold;">✅ 成功: XMLデータのプロット完了</span>`;
+            statusEl.innerHTML = `<span style="color:#27ae60; font-weight:bold;">✅ 成功: XMLデータのプロット完了<br><span style="font-size:10px; color:#555;">ピンをタップすると柱状図レポートを作成できます。</span></span>`;
             closeSheet();
 
         } catch (error) {
@@ -939,10 +1036,24 @@
                 const name = idxName !== -1 && row[idxName] ? row[idxName].replace(/"/g, "") : `データ${count+1}`;
                 const depth = idxDepth !== -1 && row[idxDepth] ? row[idxDepth].replace(/"/g, "") : "不明";
                 const url = idxUrl !== -1 && row[idxUrl] ? row[idxUrl].replace(/"/g, "") : "";
-                let popupHTML = `<div class="marker-popup-content"><div class="marker-popup-title">📊 ${name}</div><b>緯度:</b> ${lat.toFixed(5)}<br><b>経度:</b> ${lng.toFixed(5)}<br><b>深度:</b> ${depth} m<br>`;
+                let popupHTML = `<div class="marker-popup-content"><div class="marker-popup-title">📊 ${name}</div><b>緯度:</b> ${lat.toFixed(5)}<br><b>経度:</b> ${lng.toFixed(5)}<br><b>深度:</b> ${depth} m<br><span style="color:#e67e22; font-size:10px; font-weight:bold;">👉 タップしてレポートを作成</span><br>`;
                 if (url && (url.startsWith('http') || url.startsWith('www'))) { popupHTML += `<a href="${url}" target="_blank" style="display:inline-block; margin-top:5px; background:#3498db; color:#fff; padding:4px 8px; border-radius:4px; text-decoration:none;">柱状図リンク</a>`; }
                 popupHTML += `</div>`;
-                const marker = L.circleMarker([lat, lng], { radius: 6, fillColor: "#e67e22", color: "#fff", weight: 2, fillOpacity: 0.9 }).bindPopup(popupHTML).bindTooltip(name, {direction: 'top', offset: [0,-5], className:'permanent-marker-label'});
+                
+                const marker = L.circleMarker([lat, lng], { radius: 6, fillColor: "#e67e22", color: "#fff", weight: 2, fillOpacity: 0.9 })
+                                .bindPopup(popupHTML)
+                                .bindTooltip(name, {direction: 'top', offset: [0,-5], className:'permanent-marker-label'})
+                                .on('click', function() {
+                                    // CSVからのピンでも一応レポートを作れるようにする（ただし柱状図の中身は無い）
+                                    setBoringDataToReport({
+                                        lat: lat,
+                                        lng: lng,
+                                        name: name,
+                                        depth: depth,
+                                        elevation: "CSVデータ", 
+                                        soilStr: ""
+                                    });
+                                });
                 boringLayer.addLayer(marker); bounds.push([lat, lng]); count++;
             }
         }
