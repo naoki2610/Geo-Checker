@@ -17,7 +17,6 @@
         .map-container-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; background-color: #f4f6f9; }
         #map { width: 100%; height: 100%; cursor: crosshair; }
 
-        /* 赤十字カーソル（解析中心点） */
         .center-cursor {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             width: 32px; height: 32px; border: 2px solid #e74c3c; box-sizing: border-box; pointer-events: none; z-index: 1000;
@@ -124,11 +123,10 @@
 </head>
 <body class="sheet-collapsed">
 
-<!-- 全画面ローディング -->
 <div id="loading-overlay">
     <div class="big-spinner"></div>
     <div style="font-weight: bold; font-size: 18px; letter-spacing: 1px;">PDF台帳を構築中...</div>
-    <div style="font-size: 12px; margin-top: 10px; color: #ccc;">高品質な地図と統合データを描画しています。<br>画面を閉じずにお待ちください。</div>
+    <div style="font-size: 12px; margin-top: 10px; color: #ccc;">高品質な地図データを描画しています。<br>画面を閉じずにお待ちください。</div>
 </div>
 
 <div id="disclaimer-modal" style="display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99999; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;">
@@ -180,19 +178,19 @@
     <div id="bottom-sheet" class="bottom-sheet">
         <div class="sheet-header" onclick="toggleSheet()">
             <div class="sheet-handle-wrapper"><div class="sheet-handle"></div></div>
-            <div class="sheet-title-text"><span>⚙️</span> 解析結果・統合データ出力</div>
+            <div class="sheet-title-text"><span>⚙️</span> 解析結果・データ管理</div>
             <div class="sheet-toggle-icon">▼</div>
         </div>
         
         <div class="sheet-content">
             <div class="tabs">
-                <div class="tab-btn active" onclick="switchTab('tab-geo')">⛏️ 解析レポート</div>
+                <div class="tab-btn active" onclick="switchTab('tab-geo')">⛏️ 地質チェッカー</div>
                 <div class="tab-btn" onclick="switchTab('tab-boring')">📊 ボーリング読込</div>
             </div>
 
             <div id="tab-geo" class="tab-content active">
                 <div class="result-box" id="result-display" style="margin-bottom: 4px;">
-                    <span style="color:#95a5a6;">「📌 ここを解析」を押すか、読込んだボーリングピンをタップすると、周辺の地質情報と統合して表示されます。</span>
+                    <span style="color:#95a5a6;">地図中央の「📌 ここを解析」を押すか、読み込んだボーリングピンをタップしてください。</span>
                 </div>
 
                 <textarea id="geo-comment" class="custom-textarea" placeholder="現場の所見、露頭の様子などの技術者コメントを入力..."></textarea>
@@ -250,10 +248,7 @@
 
     let map = null; let geoLayer = null; let gpsMarker = null; let gpsCircle = null;
     let customPinsLayer = null; let boringLayer = null; let bufferCircle = null;
-    
-    // 【重要】地質データとボーリングデータの両方を保持できる構造に変更
-    let currentGeoData = null; 
-    let geoRecords = []; let recordIdCounter = 0;
+    let currentGeoData = null; let geoRecords = []; let recordIdCounter = 0;
 
     const isProj4Loaded = typeof proj4 !== 'undefined';
     if (isProj4Loaded) {
@@ -405,7 +400,7 @@
                 updateCoordPanel(lat, lng, elevation + "m", acc); 
                 
                 // 通常のアプローチ（ボーリングデータなし）
-                getGeologyData(lat, lng, elevation, acc, null); 
+                getGeologyData(lat, lng, true, elevation + "m", acc, null); 
             },
             (error) => { display.innerHTML = "<span style='color:red;'>位置情報の取得に失敗しました。</span>"; },
             { enableHighAccuracy: true, timeout: 10000 }
@@ -429,16 +424,15 @@
         updateCoordPanel(lat, lng, elevation + "m", "地図中央指定");
         
         // 通常のアプローチ（ボーリングデータなし）
-        getGeologyData(lat, lng, elevation, "手動", null);
+        getGeologyData(lat, lng, true, elevation + "m", "手動", null);
     }
 
-    // 【進化版】地質データを取得し、ボーリングデータがあればマージ（結合）して表示するエンジン
-    async function getGeologyData(lat, lng, elevation, accuracy, boringDataObj) {
+    // 【完全統合版】地質データとボーリングデータを1つのオブジェクトに保持し、A4出力に連携させる
+    async function getGeologyData(lat, lng, withSurroundings, elevation, accuracy, boringDataObj = null) {
         const display = document.getElementById('result-display');
-        display.innerHTML = `<span class="loading-spinner"></span><span style="color:#3498db; font-weight:bold;">産総研APIから地質情報を取得・結合中...</span>`;
+        display.innerHTML = `<span class="loading-spinner"></span><span style="color:#3498db; font-weight:bold;">産総研APIから地質情報を取得中...</span>`;
 
         try {
-            // 中心点の地質取得
             const res = await fetch(`https://gbank.gsj.jp/seamless/v2/api/1.2/legend.json?point=${lat},${lng}`);
             let age = "未定義 (データなし)"; let lithology = "海域・データなし"; let group = ""; let formation = ""; let title_ja = ""; let surroundingStr = "取得できませんでした";
             
@@ -450,27 +444,26 @@
                 formation = data.formation_ja && data.formation_ja.trim() !== "" ? data.formation_ja : "";
                 title_ja = data.title_ja && data.title_ja.trim() !== "" ? data.title_ja : "";
 
-                // 周辺500mの取得
-                const offsetLat = 0.0045; const offsetLng = 0.0055;
-                const points = [ {dir: '北', lat: lat+offsetLat, lng: lng}, {dir: '南', lat: lat-offsetLat, lng: lng}, {dir: '東', lat: lat, lng: lng+offsetLng}, {dir: '西', lat: lat, lng: lng-offsetLng} ];
-                const promises = points.map(p => fetch(`https://gbank.gsj.jp/seamless/v2/api/1.2/legend.json?point=${p.lat},${p.lng}`).then(r => r.ok ? r.json() : null).catch(()=>null));
-                const results = await Promise.all(promises);
-                
-                let surroundingArrText = [];
-                results.forEach((r, idx) => {
-                    let l = (r && r.lithology_ja) ? r.lithology_ja : "データなし/海域";
-                    surroundingArrText.push(`${points[idx].dir}:${l === lithology ? '同一' : l}`);
-                });
-                surroundingStr = surroundingArrText.join(' / ');
+                if (withSurroundings) {
+                    const offsetLat = 0.0045; const offsetLng = 0.0055;
+                    const points = [ {dir: '北', lat: lat+offsetLat, lng: lng}, {dir: '南', lat: lat-offsetLat, lng: lng}, {dir: '東', lat: lat, lng: lng+offsetLng}, {dir: '西', lat: lat, lng: lng-offsetLng} ];
+                    const promises = points.map(p => fetch(`https://gbank.gsj.jp/seamless/v2/api/1.2/legend.json?point=${p.lat},${p.lng}`).then(r => r.ok ? r.json() : null).catch(()=>null));
+                    const results = await Promise.all(promises);
+                    
+                    let surroundingArrText = [];
+                    results.forEach((r, idx) => {
+                        let l = (r && r.lithology_ja) ? r.lithology_ja : "データなし/海域";
+                        surroundingArrText.push(`${points[idx].dir}:${l === lithology ? '同一' : l}`);
+                    });
+                    surroundingStr = surroundingArrText.join(' / ');
+                }
             }
 
-            // 【完全統合】地質データとボーリングデータを1つのオブジェクトに保持
             currentGeoData = { 
                 lat, lng, elevation, accuracy, age, lithology, group, formation, title: title_ja, surrounding: surroundingStr,
-                boringData: boringDataObj // null または {name, depth, elevation, soilStr}
+                boringData: boringDataObj
             };
 
-            // 画面表示用のHTML組み立て
             let titleArr = [];
             if (group !== "") titleArr.push(`層群: ${group}`);
             if (formation !== "") titleArr.push(`累層: ${formation}`);
@@ -502,9 +495,8 @@
             display.innerHTML = `
                 <span class="label">📍 ターゲット座標: ${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
                 <span style='color:#e74c3c; font-weight:bold; font-size:14px; display:block; margin:8px 0;'>⚠️ 通信圏外です</span>
-                <span style="font-size:12px; color:#555;">APIから地質情報を取得できませんでしたが、取得した座標とコメントの記録は可能です。<br>露頭の所見を入力して「記録」ボタンを押してください。</span>
+                <span style="font-size:12px; color:#555;">APIから地質情報を取得できませんでしたが、取得した座標とコメントの記録は可能です。</span>
             `;
-            // オフラインでもボーリングデータは残す
             currentGeoData = { lat, lng, elevation, accuracy, age: "オフライン", lithology: "取得不可", group: "", formation: "", title: "", surrounding: "", boringData: boringDataObj };
             enableActionButtons(true);
         }
@@ -517,7 +509,6 @@
         geoRecords.push({ id: recordIdCounter, ...currentGeoData, comment: comment });
         
         document.getElementById('record-count').innerText = geoRecords.length;
-        
         alert(`データ(No.${recordIdCounter})を記録しました。`);
         closeSheet(); 
     }
@@ -547,7 +538,6 @@
         
         closeSheet(); 
         
-        // 【重要】UIとマーカーの完全ステルス化（※赤十字カーソルは証拠として残す）
         const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
         const coordPanel = document.getElementById('coord-info-panel');
         const fabContainer = document.querySelector('.fab-container');
@@ -565,7 +555,6 @@
         await new Promise(resolve => setTimeout(resolve, 800)); 
         
         html2canvas(captureArea, { useCORS: true, allowTaint: false, scale: 2 }).then(canvas => {
-            // ステルス解除
             if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
             if (coordPanel) coordPanel.style.display = 'block'; 
             if (fabContainer) fabContainer.style.display = '';
@@ -598,7 +587,7 @@
         });
     };
 
-    // --- 【超進化版】A4統合出力エンジン（地質＋ボーリング柱状図を1枚に凝縮） ---
+    // --- 【完全統合版】A4出力エンジン（地質＋ボーリングデータを1枚に凝縮、ステルス処理付き） ---
     window.exportA4Report = async function() {
         if (!currentGeoData || !window.jspdf) { alert("PDF生成ライブラリの読み込み待ち、またはデータがありません。"); return; }
         
@@ -611,7 +600,6 @@
         
         closeSheet();
         
-        // PDF撮影時に邪魔になるUIをすべて非表示にする
         const analyzeBtnWrap = document.getElementById('analyze-btn-wrap');
         const coordPanel = document.getElementById('coord-info-panel');
         const fabContainer = document.querySelector('.fab-container');
@@ -645,7 +633,6 @@
             const origCompassTop = compass.style.top;
             const origCompassLeft = compass.style.left;
 
-            // 1. A4の画像枠に最適な横長サイズ（724px × 400px）に強制リサイズ
             mapContainer.style.width = '724px';
             mapContainer.style.height = '400px';
             mapContainer.style.position = 'absolute';
@@ -653,30 +640,21 @@
             mapContainer.style.left = '0';
             mapContainer.style.zIndex = '99999'; 
 
-            // 2. 撮影用メイク（見切れや被りを防ぐ美しい余白の設定）
             compass.style.top = '15px';
             compass.style.left = '15px';
             scaleContainer.style.bottom = '15px';
             scaleContainer.style.right = '15px';
 
-            // 3. 【最重要】地図のアニメーション移動を強制停止し、中心をピタッと合わせる
             map.invalidateSize({animate: false});
             map.setView([currentGeoData.lat, currentGeoData.lng], map.getZoom(), {animate: false});
             
-            // 地図タイルが完全に読み込まれるまで長めに待つ
             await new Promise(resolve => setTimeout(resolve, 1500));
 
-            // ① 完璧な横長比率になった地図を高画質でスクショ撮影
             const mapCanvas = await html2canvas(mapContainer, { 
-                useCORS: true, 
-                allowTaint: false, 
-                scale: 2,
-                windowWidth: 724,
-                windowHeight: 400
+                useCORS: true, allowTaint: false, scale: 2, windowWidth: 724, windowHeight: 400
             });
             const mapDataUrl = mapCanvas.toDataURL('image/jpeg', 0.95);
             
-            // 撮影が終わったら地図を元のスマホサイズ（全画面）に戻す
             mapContainer.style.width = origWidth || '100%';
             mapContainer.style.height = origHeight || '100%';
             mapContainer.style.position = origPosition || 'absolute';
@@ -692,7 +670,6 @@
             map.invalidateSize({animate: false});
             map.setView([currentGeoData.lat, currentGeoData.lng], map.getZoom(), {animate: false});
             
-            // ② テキストデータの準備
             const now = new Date();
             const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${("0"+now.getMinutes()).slice(-2)}`;
             let accStr = currentGeoData.accuracy ? ` (GPS誤差: ±${Math.round(currentGeoData.accuracy)}m)` : "";
@@ -715,7 +692,7 @@
             
             const surroundingStr = currentGeoData.surrounding.replace(/ \/ /g, '<br>'); 
             
-            // 【重要】ボーリングデータが存在する場合、地質のすぐ下の行に自動挿入するHTMLを生成
+            // ボーリングデータが存在する場合、地質データの下に自動挿入
             let boringHtmlRow = "";
             if (currentGeoData.boringData) {
                 const b = currentGeoData.boringData;
@@ -724,7 +701,6 @@
 
             const commentStr = comment.replace(/\n/g, '<br>') || "(コメントなし)";
             
-            // ③ A4出力用のレイアウトコンテナを構築
             const reportDiv = document.createElement('div');
             reportDiv.style.position = 'absolute';
             reportDiv.style.top = '0';
@@ -740,7 +716,7 @@
                 <h2 style="text-align:center; border-bottom: 2px solid #333; padding-bottom:8px; margin-top:0; font-family:sans-serif;">地質・ボーリング 統合現地レポート</h2>
                 
                 <div style="width:724px; height:400px; margin-bottom:12px; border:1px solid #333; overflow:hidden; display:block;">
-                    <img src="${mapDataUrl}" style="width:724px; height:400px; display:block; margin:0; padding:0;">
+                    <img src="${mapDataUrl}" style="max-width:100%; max-height:100%; object-fit:contain; display:block; margin:0 auto;">
                 </div>
                 
                 <table style="width:100%; border-collapse: collapse; font-size:13px; text-align: left; font-family:sans-serif; line-height:1.4; word-break: break-all;">
@@ -749,7 +725,7 @@
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:6px; background:#f5f5f5;">平面直角座標</th><td style="border:1px solid #333; padding:6px;">${xyStr}</td></tr>
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:6px; background:#f5f5f5;">時代 / 岩相</th><td style="border:1px solid #333; padding:6px;">${geo1Str}</td></tr>
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:6px; background:#f5f5f5;">地層名・詳細</th><td style="border:1px solid #333; padding:6px;">${titleStr}</td></tr>
-                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:6px; background:#f5f5f5;">周辺500m</th><td style="border:1px solid #333; padding:6px; line-height: 1.5;">${surroundingStr}</td></tr>
+                    <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:6px; background:#f5f5f5;">周辺500m地質</th><td style="border:1px solid #333; padding:6px; line-height: 1.5;">${surroundingStr}</td></tr>
                     ${boringHtmlRow}
                     <tr style="border:1px solid #333;"><th style="border:1px solid #333; padding:6px; background:#f5f5f5; min-height:80px; vertical-align:top;">技術者所見</th><td style="border:1px solid #333; padding:6px; vertical-align:top; font-weight:bold; color:#111;">${commentStr}</td></tr>
                 </table>
@@ -764,17 +740,11 @@
 
             await new Promise(resolve => setTimeout(resolve, 800));
 
-            // ④ html2canvasでA4レイアウト全体を画像化
             const reportCanvas = await html2canvas(reportDiv, {
-                scale: 2,
-                useCORS: true,
-                windowWidth: 800,
-                width: 800,
-                scrollY: 0
+                scale: 2, useCORS: true, windowWidth: 800, width: 800, scrollY: 0
             });
             const finalImgData = reportCanvas.toDataURL('image/jpeg', 0.95);
 
-            // ⑤ jsPDFでPDF化
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF('p', 'mm', 'a4');
             const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -783,7 +753,6 @@
             pdf.addImage(finalImgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
             pdf.save('地質_ボーリング_統合レポート.pdf');
 
-            // ⑥ 後片付け
             document.body.removeChild(reportDiv);
             document.documentElement.style.overflow = origOverflowHtml;
             document.body.style.overflow = origOverflowBody;
@@ -792,7 +761,6 @@
             if (coordPanel) coordPanel.style.display = 'block'; 
             if (fabContainer) fabContainer.style.display = '';
             if (attribution) attribution.style.display = '';
-            
             if (customPinsLayer) customPinsLayer.addTo(map);
             if (gpsMarker) gpsMarker.addTo(map);
             if (gpsCircle) gpsCircle.addTo(map);
@@ -822,15 +790,6 @@
             
             openSheet();
         } finally {
-            if (analyzeBtnWrap) analyzeBtnWrap.style.display = '';
-            if (coordPanel) coordPanel.style.display = 'block'; 
-            if (fabContainer) fabContainer.style.display = '';
-            if (attribution) attribution.style.display = '';
-            
-            if (customPinsLayer) customPinsLayer.addTo(map);
-            if (gpsMarker) gpsMarker.addTo(map);
-            if (gpsCircle) gpsCircle.addTo(map);
-
             loadingOverlay.style.display = 'none';
         }
     };
@@ -862,7 +821,7 @@
         input.value = ""; 
     }
 
-    // 【スマホエラー回避策搭載】電子納品XMLデータ圧縮抽出エンジン
+    // 【要約エンジン搭載】長すぎるXMLデータをコンパクトにまとめ、地質データと統合する機能
     function processBoringXML(xmlText, statusEl) {
         try {
             const startIndex = xmlText.indexOf('<');
@@ -900,7 +859,7 @@
             const depth = xmlDoc.getElementsByTagName("総掘進長")[0]?.textContent || "不明";
             const elevation = xmlDoc.getElementsByTagName("孔口標高")[0]?.textContent || "不明";
 
-            // 【超圧縮処理】土質データを簡潔な1行にまとめる
+            // 土質データを要約（縦に長すぎるとPDF化でクラッシュするため）
             let soilData = [];
             const soilNodes = xmlDoc.getElementsByTagName("土質岩種区分");
             for (let i = 0; i < soilNodes.length; i++) {
@@ -910,19 +869,17 @@
                     soilData.push(`~${parseFloat(bottomDepth)}m:${soilType}`);
                 }
             }
-            let soilTypeStr = soilData.length > 0 ? "<b style='color:#2980b9;'>土質推移:</b> " + soilData.join(" / ") : "";
-            // 長すぎる場合はカット（スマホPDFエラー対策）
+            let soilTypeStr = soilData.length > 0 ? "<span style='color:#2980b9;'>土質推移:</span> " + soilData.join(" / ") : "";
             if (soilTypeStr.length > 150) soilTypeStr = soilTypeStr.substring(0, 147) + " ...他";
             
-            // 【超圧縮処理】N値データを簡潔な1行にまとめる
+            // N値データを要約（縦に長すぎるとPDF化でクラッシュするため）
             const nNodes = xmlDoc.getElementsByTagName("標準貫入試験");
             let nValues = [];
             for (let i = 0; i < nNodes.length; i++) {
                 const nVal = nNodes[i].getElementsByTagName("標準貫入試験_合計打撃回数")[0]?.textContent || "";
                 if(nVal) nValues.push(nVal);
             }
-            let nValueStr = nValues.length > 0 ? "<b style='color:#e67e22;'>N値推移(1m毎):</b> " + nValues.join(", ") : "";
-            // 長すぎる場合はカット
+            let nValueStr = nValues.length > 0 ? "<span style='color:#e67e22;'>N値推移(1m毎):</span> " + nValues.join(", ") : "";
             if (nValueStr.length > 150) nValueStr = nValueStr.substring(0, 147) + " ...他";
 
             const soilStr = [soilTypeStr, nValueStr].filter(Boolean).join("<br>");
@@ -940,7 +897,7 @@
                                 const boringData = { name: name, depth: depth, elevation: elevation + "m", soilStr: soilStr };
                                 
                                 // ボーリングデータを引数として渡し、産総研データと結合する
-                                getGeologyData(lat, lng, elevation + "m", "XML", boringData);
+                                getGeologyData(lat, lng, true, elevation + "m", "XML読込", boringData);
                                 
                                 openSheet();
                                 switchTab('tab-geo');
@@ -992,7 +949,7 @@
                                     map.setView([lat, lng], 15);
                                     updateCoordPanel(lat, lng, "CSV由来", "CSVデータ読込");
                                     const boringData = { name: name, depth: depth, elevation: "CSV由来", soilStr: "<span style='color:#7f8c8d;'>CSVには土質・N値データが含まれていません。</span>" };
-                                    getGeologyData(lat, lng, "CSV由来", "CSV", boringData);
+                                    getGeologyData(lat, lng, true, "CSV由来", "CSV", boringData);
                                     openSheet();
                                     switchTab('tab-geo');
                                 });
